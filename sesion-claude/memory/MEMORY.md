@@ -1,0 +1,2 @@
+- [No GNS3, QEMU only](no-gns3-qemu-only.md) — p2redes nodes are QEMU VMs or physical Debian; never GNS3
+- [Commit and push to main](commit-and-push-to-main.md) — every change: update docs, commit, push straight to main
