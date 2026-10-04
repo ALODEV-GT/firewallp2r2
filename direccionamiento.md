@@ -37,8 +37,9 @@ Cadena principal: ISP1/ISP2 → R-EDGE → FW → PROXY → R2 → VLANs. La DMZ
 | PROXY | 2 | hacia FW, hacia R2 |
 | R2 | 2 | hacia PROXY, troncal 802.1Q (4 subinterfaces) |
 | SW1 (Open vSwitch) | 6 puertos + espejo | troncal hacia R2, 5 puertos de acceso, 1 puerto espejo (SPAN) |
-| VPN-SRV | 1 | DMZ (más `wg0`, virtual) |
-| WEB01 / WEB02 | 1 | DMZ |
+| VPN-SRV | 1 (virtual) | DMZ (más `wg0`, el túnel) |
+| WEB01 / WEB02 | 1 (virtual) | DMZ |
+| Anfitrión del estudiante 4 | 1 | Ethernet del cable hacia FW, unida a `br-dmz` |
 | Zabbix, SRV01, PCs | 1 | su VLAN |
 
 ## Tabla de direccionamiento

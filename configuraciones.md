@@ -1161,11 +1161,36 @@ El failover se provoca cortando el enlace fuera de R-EDGE: bajando el bridge en 
 
 ## 6. Estudiante 4: VPN WireGuard y DMZ
 
+### Interfaces que usa este componente
+
+El anfitrión del estudiante 4 necesita una sola interfaz física: su puerto Ethernet, conectado por cable a FW y unido al bridge `br-dmz`. Las demás interfaces son virtuales:
+
+| Equipo | Interfaz | Tipo | Dirección |
+|---|---|---|---|
+| Anfitrión | Ethernet del cable hacia FW | Física, sin IP, unida a `br-dmz` | — |
+| VPN-SRV | `eth0` | Virtual, en `br-dmz` | `10.10.50.2/28` |
+| VPN-SRV | `wg0` | Túnel WireGuard | `10.200.10.1/28` y `10.200.20.1/27` |
+| WEB01 | `eth0` | Virtual, en `br-dmz` | `10.10.50.10/28` |
+| WEB02 (opcional) | `eth0` | Virtual, en `br-dmz` | `10.10.50.11/28` |
+
+- **Una sola interfaz por VM:** VPN-SRV no necesita una segunda tarjeta. El tráfico cifrado entra por `eth0` y el descifrado sale por la misma `eth0` hacia FW.
+- **Sin interfaz para ngrok:** el túnel sale por la `eth0` de WEB01, pasando por FW.
+- **El Ethernet queda dedicado:** al unirlo al bridge pierde su IP en el anfitrión. Si el anfitrión necesita Internet propia, debe usar otra conexión, como la Wi-Fi.
+- **Clientes VPN de prueba:** las VM de clientes del propio anfitrión no usan `br-dmz`. Para la prueba integrada, el cliente es PC-REMOTO, en el anfitrión del estudiante 3 (sección 1.5).
+
+Con libvirt, cada VM se conecta a `br-dmz` así, quitando antes su interfaz de la red NAT por defecto:
+
+```bash
+virsh attach-interface --domain debian-wireguard --type bridge --source br-dmz --model virtio --config
+```
+
+Dentro de la VM, la interfaz puede llamarse `enp1s0` o similar en lugar de `eth0` (sección 1.5).
+
 ### 6.1 VPN-SRV: servidor WireGuard
 
 > **Equipo real del encargado.** VPN-SRV es la VM `debian-wireguard`, gestionada con libvirt, y ya tiene `wg0` con sus claves y peers creados a mano. Para integrarla:
 >
-> - **Red de la VM:** su interfaz debe conectarse al bridge `br-dmz` del anfitrión, no a la red NAT por defecto de libvirt, y usar `10.10.50.2/28` con gateway `10.10.50.1`.
+> - **Red de la VM:** su interfaz debe conectarse al bridge `br-dmz` del anfitrión (ver arriba), no a la red NAT por defecto de libvirt, y usar `10.10.50.2/28` con gateway `10.10.50.1`.
 > - **Nombres de archivo:** sus claves están en `wg0-private.key` y `wg0-public.key`; esta guía las llama `server.key` y `server.pub`. Sirve cualquiera de los dos nombres mientras el script de peers use el mismo.
 > - **Endpoint de los clientes:** usan el alias `vpn-multiwan` en `/etc/hosts`, que hoy apunta a la red de libvirt. En la integración debe apuntar a la IP WAN de R-EDGE.
 
@@ -1614,7 +1639,7 @@ Diferencias entre lo que cada encargado ha informado y lo que esta guía necesit
 
 1. **`AllowedIPs` de los clientes:** incluir `10.10.0.0/16`, y `0.0.0.0/0` en al menos un peer para Full Tunnel. Con el valor actual, el cliente no llega a ninguna VLAN.
 2. **Endpoint:** apuntar `vpn-multiwan` a la IP WAN de R-EDGE, y entregar un perfil de cliente al estudiante 3 para PC-REMOTO.
-3. **Red de VPN-SRV:** conectarla a `br-dmz` con `10.10.50.2/28`, sin NAT.
+3. **Red del anfitrión y de VPN-SRV:** crear `br-dmz` con el Ethernet del cable hacia FW (sección 1.3) y conectar VPN-SRV a ese bridge con `10.10.50.2/28`, sin NAT.
 4. **WEB01 y ngrok:** montar el servidor web, sus rutas hacia las redes VPN y el túnel (secciones 6.2 y 6.3).
 5. **Pruebas:** añadir pruebas hacia las VLAN, no solo ping al servidor VPN.
 
