@@ -14,10 +14,10 @@ No se usa GNS3. Cada nodo es una máquina virtual QEMU/KVM con Debian 13, o un e
 
 | Nodo | Dónde se ejecuta | Modo | Interfaces | RAM sugerida |
 |---|---|---|---|---|
-| R-EDGE | VM QEMU Debian 13, o Debian físico | Texto | 3 | 512 MB |
+| R-EDGE | VM QEMU Debian 13 | Texto | 3 | 512 MB |
 | FW | Equipo físico con Debian | Texto | 3 | — |
 | PROXY | Equipo físico con Debian | Texto | 2 | — |
-| R2 | VM QEMU Debian 13, o Debian físico | Texto | 2 | 512 MB |
+| R2 | VM QEMU Debian 13 | Texto | 2 | 512 MB |
 | SW1 | Open vSwitch en el anfitrión Ubuntu del estudiante 1 (no es una VM) | Consola | 6 puertos + espejo | — |
 | ZABBIX | VM QEMU Debian 13 | Texto (su interfaz web se usa desde un cliente) | 1 | 2 GB |
 | VPN-SRV | VM QEMU Debian 13 | Texto | 1 | 256 MB |
@@ -153,20 +153,20 @@ La MAC de cada interfaz sale del `id`: PC-USER01 tiene `52:54:00:00:0c:00` y PC-
 - **Nombres de interfaz:** la guía usa `eth0`, `eth1`, … Si Debian las nombra `ens3` o `enp0s3`, añade `net.ifnames=0 biosdevname=0` a `GRUB_CMDLINE_LINUX` en `/etc/default/grub`, ejecuta `update-grub` y reinicia; o sustituye los nombres en cada archivo.
 - **SW1 como Open vSwitch:** el enunciado pide configurar los switches por consola, y Open vSwitch se administra con `ovs-vsctl`. Corre en el anfitrión del estudiante 1, que usa Ubuntu; el catedrático autorizó Ubuntu para este equipo.
 - **Varios equipos físicos:** cada integrante trabaja en su propio equipo, así que los segmentos que unen dos componentes cruzan de una máquina a otra por cable. En cada extremo, la interfaz Ethernet física se une al bridge de ese segmento (`ip link set <interfaz> master br-proxy-r2`), o es directamente la interfaz del nodo si este es un equipo físico. Por ejemplo, `eth0` de R2 sale por `br-proxy-r2` en el anfitrión del estudiante 1 y llega por cable al PROXY, que es un equipo físico. `lab-net.sh` crea todos los bridges; cada anfitrión solo necesita los de sus propios nodos.
-- **Debian como sistema principal:** si un nodo es un equipo físico, necesita tantas interfaces de red como indica la tabla (adaptadores USB-Ethernet si faltan). Si ese nodo es R-EDGE, los dos teléfonos se conectan a él y son directamente sus interfaces WAN; no hacen falta `br-isp1` ni `br-isp2`, y sus nombres reales (`usb0`, `usb1`, …) van en `mwan.conf` y en `/etc/network/interfaces`.
+- **Debian como sistema principal:** si un nodo es un equipo físico, necesita tantas interfaces de red como indica la tabla (adaptadores USB-Ethernet si faltan). Es el caso de FW y PROXY; sus nombres reales de interfaz sustituyen a `eth0`, `eth1`, … (secciones 4.2 y 7.1).
 - **Consumo de datos:** todo el tráfico del laboratorio sale por datos móviles. Instala los paquetes antes (sección 2.1) y evita descargas grandes durante las pruebas.
 - **Sin IP pública (cliente VPN):** las redes móviles casi siempre usan CGNAT, así que un cliente no podrá iniciar la VPN desde Internet. Como el enlace USB solo une el teléfono con R-EDGE, el cliente "remoto" debe conectarse al lado WAN: usa la VM PC-REMOTO en `br-isp1` (sección 1.4), dale una IP de la red del teléfono 1 y usa como `Endpoint` la IP WAN de R-EDGE en esa red. Un equipo real fuera del laboratorio solo sirve si algún teléfono tiene IP pública.
 - **Wireshark:** se ejecuta en el anfitrión de SW1 capturando en `span0`, el puerto espejo del switch (sección 3.1).
 
 ### 1.6 Reparto real por equipos y cableado
 
-Cada integrante monta su componente en su propio equipo. La tabla recoge lo que cada uno ha informado; lo marcado "por confirmar" todavía no se ha comunicado.
+Cada integrante monta su componente en su propio equipo. La tabla recoge lo que cada uno ha informado.
 
 | Encargado | Equipo real | Nodos que aloja |
 |---|---|---|
 | Estudiante 1 | Anfitrión Ubuntu con QEMU/KVM y Open vSwitch | R2, SW1, PC-ADMIN01, PC-USER01, PC-USER02, ZABBIX, SRV01 |
 | Estudiante 2 | Equipo físico con Debian y NetworkManager | PROXY |
-| Estudiante 3 | Por confirmar (VM o equipo físico), con dos teléfonos por USB | R-EDGE |
+| Estudiante 3 | Anfitrión con una VM QEMU Debian en modo texto, y los dos teléfonos conectados por USB al anfitrión | R-EDGE |
 | Estudiante 4 | Anfitrión con VM QEMU/KVM gestionadas con libvirt | VPN-SRV, WEB01, clientes VPN de prueba |
 | Estudiante 5 | Equipo físico con Debian en modo texto | FW |
 
@@ -174,7 +174,7 @@ Los segmentos que unen componentes de dos equipos son cables Ethernet:
 
 | Enlace | Red | Un extremo | Otro extremo |
 |---|---|---|---|
-| R-EDGE – FW | 10.10.0.0/30 | R-EDGE `eth2` | FW `eth0` |
+| R-EDGE – FW | 10.10.0.0/30 | Interfaz física del anfitrión del estudiante 3, unida a `br-edge-fw` | FW `eth0` |
 | FW – PROXY | 10.10.0.4/30 | FW `eth1` | PROXY `enp0s31f6` |
 | PROXY – R2 | 10.10.0.8/30 | PROXY `enx9c69d3101d16` | Interfaz física del anfitrión del estudiante 1, unida a `br-proxy-r2` |
 | FW – DMZ | 10.10.50.0/28 | FW `eth2` | Interfaz física del anfitrión del estudiante 4, unida a `br-dmz` |
@@ -183,7 +183,7 @@ Interfaces Ethernet físicas que necesita cada equipo (con adaptadores USB-Ether
 
 | Equipo | Interfaces | Para |
 |---|---|---|
-| R-EDGE | 1, más los dos teléfonos por USB | FW |
+| Anfitrión del estudiante 3 | 1, más los dos teléfonos por USB | FW |
 | FW | 3 | R-EDGE, PROXY, DMZ |
 | PROXY | 2 | FW, R2 |
 | Anfitrión del estudiante 1 | 1 | PROXY |
@@ -1526,7 +1526,7 @@ Diferencias entre lo que cada encargado ha informado y lo que esta guía necesit
 ### Estudiante 3 (R-EDGE)
 
 1. **Redes de los teléfonos:** confirmar que los dos entregan redes distintas y anotarlas (sección 1.3).
-2. **Equipo:** informar si R-EDGE es una VM o un equipo físico.
+2. **Enlace hacia el firewall:** R-EDGE es una VM, así que hay que unir una interfaz física del anfitrión a `br-edge-fw` y conectarla por cable a FW. Los teléfonos van en `br-isp1` y `br-isp2` (sección 1.3).
 3. **VPN:** reenviar UDP 51820 hacia `10.10.50.2` (ya incluido en `mwan-apply.sh`).
 
 ### Estudiante 4 (VPN y DMZ)
