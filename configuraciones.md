@@ -15,8 +15,8 @@ No se usa GNS3. Cada nodo es una máquina virtual QEMU/KVM con Debian 13, o un e
 | Nodo | Dónde se ejecuta | Modo | Interfaces | RAM sugerida |
 |---|---|---|---|---|
 | R-EDGE | VM QEMU Debian 13, o Debian físico | Texto | 3 | 512 MB |
-| FW | VM QEMU Debian 13, o Debian físico | Texto | 3 | 1 GB (Suricata) |
-| PROXY | VM QEMU Debian 13, o Debian físico | Texto | 2 | 1 GB |
+| FW | Equipo físico con Debian | Texto | 3 | — |
+| PROXY | Equipo físico con Debian | Texto | 2 | — |
 | R2 | VM QEMU Debian 13, o Debian físico | Texto | 2 | 512 MB |
 | SW1 | Open vSwitch en el anfitrión Ubuntu del estudiante 1 (no es una VM) | Consola | 6 puertos + espejo | — |
 | ZABBIX | VM QEMU Debian 13 | Texto (su interfaz web se usa desde un cliente) | 1 | 2 GB |
@@ -132,8 +132,7 @@ Arranque de cada nodo, como root y cada uno en su propia terminal (o en ventanas
 
 ```bash
 vm.sh R-EDGE    1  512  br-isp1 br-isp2 br-edge-fw
-vm.sh FW        2  1024 br-edge-fw br-fw-proxy br-dmz
-vm.sh PROXY     3  1024 br-fw-proxy br-proxy-r2
+# FW y PROXY son equipos físicos: no se arrancan con vm.sh.
 vm.sh R2        4  512  br-proxy-r2 tap:tap-r2
 vm.sh ZABBIX    7  2048 tap:tap-zabbix
 vm.sh SRV01     8  256  tap:tap-srv01
@@ -169,7 +168,7 @@ Cada integrante monta su componente en su propio equipo. La tabla recoge lo que 
 | Estudiante 2 | Equipo físico con Debian y NetworkManager | PROXY |
 | Estudiante 3 | Por confirmar (VM o equipo físico), con dos teléfonos por USB | R-EDGE |
 | Estudiante 4 | Anfitrión con VM QEMU/KVM gestionadas con libvirt | VPN-SRV, WEB01, clientes VPN de prueba |
-| Estudiante 5 | Por confirmar (VM o equipo físico) | FW |
+| Estudiante 5 | Equipo físico con Debian en modo texto | FW |
 
 Los segmentos que unen componentes de dos equipos son cables Ethernet:
 
@@ -1269,6 +1268,20 @@ ngrok abre una conexión **saliente** por TCP 443 desde WEB01 hacia su nube y de
 
 ### 7.1 Red de FW
 
+> **Equipo real del encargado.** FW es un equipo físico con Debian en modo texto, así que sus interfaces no se llaman `eth0`, `eth1` y `eth2`. Necesita tres interfaces Ethernet; si el equipo tiene menos, se completan con adaptadores USB-Ethernet. Los nombres reales se ven con `ip link` y hay que usarlos en tres sitios:
+>
+> - **Red:** `/etc/network/interfaces` (abajo).
+> - **Firewall:** las definiciones `WAN`, `INSIDE` y `DMZ` al inicio de `nftables.conf` (sección 7.2). El resto de las reglas usa esos nombres, así que no cambia.
+> - **IDS:** la lista `af-packet` de `suricata.yaml` (sección 7.4).
+>
+> | En esta guía | Papel | Conectada por cable a |
+> |---|---|---|
+> | `eth0` | WAN | R-EDGE |
+> | `eth1` | Interna | PROXY (`enp0s31f6`) |
+> | `eth2` | DMZ | Anfitrión del estudiante 4 (`br-dmz`) |
+>
+> Los adaptadores USB-Ethernet reciben nombres del tipo `enx…` derivados de su MAC, así que el nombre no cambia aunque se conecten en otro puerto.
+
 `/etc/network/interfaces`:
 
 ```
@@ -1526,6 +1539,6 @@ Diferencias entre lo que cada encargado ha informado y lo que esta guía necesit
 
 ### Estudiante 5 (FW)
 
-1. **Equipo:** informar si FW es una VM o un equipo físico; necesita tres interfaces.
+1. **Interfaces:** FW es un equipo físico y necesita tres interfaces Ethernet (adaptadores USB-Ethernet si faltan). Hay que sustituir `eth0`, `eth1` y `eth2` por sus nombres reales (sección 7.1).
 2. **Tráfico web del proxy:** si el estudiante 2 no usa TPROXY, añadir una regla que permita TCP 80 desde `10.10.0.6` hacia Internet.
 3. **Puerto espejo:** coordinar con el estudiante 1 la captura en `span0`.
