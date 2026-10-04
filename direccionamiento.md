@@ -4,10 +4,9 @@ Cadena principal: ISP1/ISP2 → R-EDGE → FW → PROXY → R2 → VLANs. La DMZ
 
 ## Supuestos por confirmar
 
-- **WAN, ISP1:** `192.168.101.0/24` es la red que crea el anfitrión en `br-isp1` (ver `configuraciones.md`, sección 1.3); no depende del proveedor mientras el anfitrión salga por Wi-Fi.
-- **WAN, ISP2:** sus IPs son marcadores; dependen de la red que entregue el teléfono por USB.
+- **WAN:** los dos ISP son dos teléfonos celulares conectados por USB. Sus IPs son marcadores; dependen de la red que entregue cada teléfono, y las dos redes deben ser distintas (ver `configuraciones.md`, sección 1.3).
 - **DMZ y VPN en un mismo segmento:** WireGuard y los servidores web comparten `10.10.50.0/28` en una sola interfaz del firewall. Separarlos exigiría una cuarta interfaz en FW.
-- **DHCP en servidor aparte:** está como equipo propio en la VLAN 20; también puede correr en R2 sobre `eth1.20`.
+- **DHCP en R2:** el servicio DHCP restringido corre en R2 y escucha solo en `eth1.20`. El diagrama del enunciado lo dibuja dentro de la VLAN de Usuarios; si se exige un equipo aparte, puede moverse a una VM en esa VLAN con los mismos archivos.
 - **Puertos elegidos:** 51820 para WireGuard y 8080 para el portal de Squid.
 - **VPN-ADMIN hacia Zabbix:** el enunciado restringe el dashboard a la VLAN de Administración; quitar esa regla si se interpreta de forma estricta.
 
@@ -30,20 +29,20 @@ Cadena principal: ISP1/ISP2 → R-EDGE → FW → PROXY → R2 → VLANs. La DMZ
 
 | Dispositivo | Físicas | Uso |
 |---|---|---|
-| R-EDGE | 3 | ISP1, ISP2, hacia FW |
+| R-EDGE | 3 | ISP1 (teléfono 1), ISP2 (teléfono 2), hacia FW |
 | FW | 3 | hacia R-EDGE, hacia PROXY, DMZ |
 | PROXY | 2 | hacia FW, hacia R2 |
 | R2 | 2 | hacia PROXY, troncal 802.1Q (4 subinterfaces) |
 | SW1 | 8 | troncal hacia R2, 6 puertos de acceso, 1 puerto espejo (SPAN) |
 | VPN-SRV | 1 | DMZ (más `wg0`, virtual) |
 | WEB01 / WEB02 | 1 | DMZ |
-| Zabbix, DHCP-SRV, PCs | 1 | su VLAN |
+| Zabbix, SRV01, PCs | 1 | su VLAN |
 
 ## Tabla de direccionamiento
 
 | Dispositivo | Interfaz | IP | Máscara | Gateway | Red |
 |---|---|---|---|---|---|
-| R-EDGE | eth0 (ISP1) | 192.168.101.2 | 255.255.255.0 | 192.168.101.1 | 192.168.101.0/24 |
+| R-EDGE | eth0 (ISP1) | 192.168.41.2 * | 255.255.255.0 | 192.168.41.1 * | 192.168.41.0/24 * |
 | R-EDGE | eth1 (ISP2) | 192.168.42.2 * | 255.255.255.0 | 192.168.42.1 * | 192.168.42.0/24 * |
 | R-EDGE | eth2 | 10.10.0.1 | 255.255.255.252 | — | 10.10.0.0/30 |
 | FW | eth0 | 10.10.0.2 | 255.255.255.252 | 10.10.0.1 | 10.10.0.0/30 |
@@ -53,7 +52,7 @@ Cadena principal: ISP1/ISP2 → R-EDGE → FW → PROXY → R2 → VLANs. La DMZ
 | PROXY | eth1 | 10.10.0.9 | 255.255.255.252 | — | 10.10.0.8/30 |
 | R2 | eth0 | 10.10.0.10 | 255.255.255.252 | 10.10.0.9 | 10.10.0.8/30 |
 | R2 | eth1.10 | 10.10.10.1 | 255.255.255.224 | — | 10.10.10.0/27 |
-| R2 | eth1.20 | 10.10.20.1 | 255.255.255.128 | — | 10.10.20.0/25 |
+| R2 | eth1.20 (gateway y DHCP) | 10.10.20.1 | 255.255.255.128 | — | 10.10.20.0/25 |
 | R2 | eth1.30 | 10.10.30.1 | 255.255.255.240 | — | 10.10.30.0/28 |
 | R2 | eth1.40 | 10.10.40.1 | 255.255.255.224 | — | 10.10.40.0/27 |
 | VPN-SRV | eth0 | 10.10.50.2 | 255.255.255.240 | 10.10.50.1 | 10.10.50.0/28 |
@@ -62,7 +61,6 @@ Cadena principal: ISP1/ISP2 → R-EDGE → FW → PROXY → R2 → VLANs. La DMZ
 | WEB01 | eth0 | 10.10.50.10 | 255.255.255.240 | 10.10.50.1 | 10.10.50.0/28 |
 | WEB02 (opcional) | eth0 | 10.10.50.11 | 255.255.255.240 | 10.10.50.1 | 10.10.50.0/28 |
 | PC-ADMIN01 | eth0 | 10.10.10.10 | 255.255.255.224 | 10.10.10.1 | 10.10.10.0/27 |
-| DHCP-SRV | eth0 | 10.10.20.2 | 255.255.255.128 | 10.10.20.1 | 10.10.20.0/25 |
 | PC-USER01 (DHCP) | eth0 | 10.10.20.10 | 255.255.255.128 | 10.10.20.1 | 10.10.20.0/25 |
 | PC-USER02 (DHCP) | eth0 | 10.10.20.11 | 255.255.255.128 | 10.10.20.1 | 10.10.20.0/25 |
 | ZABBIX | eth0 | 10.10.30.2 | 255.255.255.240 | 10.10.30.1 | 10.10.30.0/28 |
@@ -73,7 +71,7 @@ Cadena principal: ISP1/ISP2 → R-EDGE → FW → PROXY → R2 → VLANs. La DMZ
 | Peer User 2 | wg0 | 10.200.20.11 | 255.255.255.0 | túnel | 10.200.20.0/24 |
 | Peer User 3 | wg0 | 10.200.20.12 | 255.255.255.0 | túnel | 10.200.20.0/24 |
 
-\* Marcador: sustituir por la red real que entregue el teléfono (ISP2).
+\* Marcador: sustituir por la red real que entregue cada teléfono.
 
 SW1 es de capa 2 y no lleva IP. Sus puertos:
 
@@ -81,7 +79,7 @@ SW1 es de capa 2 y no lleva IP. Sus puertos:
 |---|---|---|---|
 | eth0 | Troncal 802.1Q | 10, 20, 30, 40 | R2 eth1 |
 | eth1 | Acceso | 10 | PC-ADMIN01 |
-| eth2 | Acceso | 20 | DHCP-SRV |
+| eth2 | Acceso | 20 | Libre: cliente no registrado (prueba de DHCP) |
 | eth3 | Acceso | 20 | PC-USER01 |
 | eth4 | Acceso | 20 | PC-USER02 |
 | eth5 | Acceso | 30 | ZABBIX |
@@ -94,7 +92,7 @@ Solo rutas estáticas; las redes conectadas directamente no se listan.
 
 | Dispositivo | Red destino | Máscara | Next Hop | Interfaz |
 |---|---|---|---|---|
-| R-EDGE | 0.0.0.0 | 0.0.0.0 | 192.168.101.1 | eth0 |
+| R-EDGE | 0.0.0.0 | 0.0.0.0 | 192.168.41.1 * | eth0 |
 | R-EDGE | 0.0.0.0 | 0.0.0.0 | 192.168.42.1 * | eth1 |
 | R-EDGE | 10.10.0.0 | 255.255.0.0 | 10.10.0.2 | eth2 |
 | R-EDGE | 10.200.10.0 | 255.255.255.0 | 10.10.0.2 | eth2 |

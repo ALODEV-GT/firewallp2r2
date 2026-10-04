@@ -19,28 +19,28 @@ No se usa GNS3. Cada nodo es una máquina virtual QEMU/KVM con Debian 13, o un e
 | PROXY | VM QEMU Debian 13, o Debian físico | Texto | 2 | 1 GB |
 | R2 | VM QEMU Debian 13, o Debian físico | Texto | 2 | 512 MB |
 | SW1 | VM QEMU Debian 13 (bridge Linux con VLAN) | Texto | 8 | 256 MB |
-| DHCP-SRV | VM QEMU Debian 13 | Texto | 1 | 256 MB |
 | ZABBIX | VM QEMU Debian 13 | Texto (su interfaz web se usa desde un cliente) | 1 | 2 GB |
 | VPN-SRV | VM QEMU Debian 13 | Texto | 1 | 256 MB |
 | WEB01 / WEB02 | VM QEMU Debian 13 | Texto | 1 | 256 MB |
 | SRV01 | VM QEMU Debian 13 | Texto | 1 | 256 MB |
 | PC-ADMIN01, PC-USER01/02 | VM QEMU Debian con escritorio | Gráfico (permitido para clientes) | 1 | 2 GB |
-| Cliente VPN remoto | Equipo real (portátil o teléfono) fuera de la topología | Gráfico | — | — |
+| PC-REMOTO (cliente VPN) | VM QEMU Debian con escritorio conectada a `br-isp1` (ver 1.5) | Gráfico | 1 | 2 GB |
+| PC-INVITADO (prueba de rechazo DHCP) | VM QEMU Debian con escritorio conectada a `br-p2` | Gráfico | 1 | 2 GB |
 | Anfitrión | Equipo Linux que ejecuta QEMU y los bridges | — | — | — |
 
 ### 1.2 Bridges del anfitrión
 
 | Bridge | Segmento | Interfaces conectadas |
 |---|---|---|
-| br-isp1 | ISP1 | R-EDGE eth0, salida del anfitrión por Wi-Fi |
-| br-isp2 | ISP2 | R-EDGE eth1, interfaz USB del teléfono |
+| br-isp1 | ISP1 | R-EDGE eth0, interfaz USB del teléfono 1, PC-REMOTO |
+| br-isp2 | ISP2 | R-EDGE eth1, interfaz USB del teléfono 2 |
 | br-edge-fw | 10.10.0.0/30 | R-EDGE eth2, FW eth0 |
 | br-fw-proxy | 10.10.0.4/30 | FW eth1, PROXY eth0 |
 | br-proxy-r2 | 10.10.0.8/30 | PROXY eth1, R2 eth0 |
 | br-dmz | 10.10.50.0/28 | FW eth2, VPN-SRV, WEB01, WEB02 |
 | br-trunk | Troncal 802.1Q | R2 eth1, SW1 eth0 |
 | br-p1 | Puerto 1 de SW1 (VLAN 10) | SW1 eth1, PC-ADMIN01 |
-| br-p2 | Puerto 2 de SW1 (VLAN 20) | SW1 eth2, DHCP-SRV |
+| br-p2 | Puerto 2 de SW1 (VLAN 20) | SW1 eth2, libre: cliente no registrado para la prueba de DHCP |
 | br-p3 | Puerto 3 de SW1 (VLAN 20) | SW1 eth3, PC-USER01 |
 | br-p4 | Puerto 4 de SW1 (VLAN 20) | SW1 eth4, PC-USER02 |
 | br-p5 | Puerto 5 de SW1 (VLAN 30) | SW1 eth5, ZABBIX |
@@ -51,14 +51,23 @@ Cada bridge `br-pN` equivale a un cable entre un puerto de SW1 y un equipo. Las 
 
 ### 1.3 Red del anfitrión
 
-`/usr/local/sbin/lab-net.sh` en el anfitrión (ajusta `WIFI_IF` y `TEL_IF` a los nombres reales, que se ven con `ip link`):
+Los dos ISP son dos teléfonos celulares conectados por USB al anfitrión, con el anclaje de red por USB activado. Cada teléfono aparece en el anfitrión como una interfaz de red (`usb0`, `usb1` o un nombre del tipo `enx…`).
+
+Antes de ejecutar el script hay que anotar la red de cada teléfono, porque después el anfitrión ya no tendrá IP en ellas:
+
+1. Conecta el primer teléfono y activa el anclaje por USB.
+2. Ejecuta `ip -4 addr show` e `ip route` en el anfitrión, y anota la interfaz, la IP y máscara recibidas y el gateway (la IP del teléfono).
+3. Repite con el segundo teléfono.
+4. Comprueba que las dos redes sean distintas.
+
+`/usr/local/sbin/lab-net.sh` en el anfitrión (ajusta `TEL1_IF` y `TEL2_IF` a los nombres anotados):
 
 ```bash
 #!/bin/bash
-# Crea los bridges del laboratorio y las dos salidas a Internet.
+# Crea los bridges del laboratorio y une cada teléfono a su bridge de ISP.
 set -e
-WIFI_IF=wlan0          # interfaz Wi-Fi del anfitrión (ISP1)
-TEL_IF=usb0            # interfaz del teléfono por USB (ISP2)
+TEL1_IF=usb0           # teléfono 1 (ISP1)
+TEL2_IF=usb1           # teléfono 2 (ISP2)
 
 for br in br-isp1 br-isp2 br-edge-fw br-fw-proxy br-proxy-r2 br-dmz br-trunk \
           br-p1 br-p2 br-p3 br-p4 br-p5 br-p6 br-p7; do
@@ -66,20 +75,15 @@ for br in br-isp1 br-isp2 br-edge-fw br-fw-proxy br-proxy-r2 br-dmz br-trunk \
   ip link set "$br" up
 done
 
-# ISP1: una interfaz Wi-Fi no se puede añadir a un bridge, así que el
-# anfitrión hace de gateway de ISP1 y traduce hacia la Wi-Fi.
-ip addr replace 192.168.101.1/24 dev br-isp1
-sysctl -w net.ipv4.ip_forward=1
-nft add table ip lab 2>/dev/null || true
-nft flush table ip lab
-nft add chain ip lab post '{ type nat hook postrouting priority srcnat; }'
-nft add rule ip lab post ip saddr 192.168.101.0/24 oifname "$WIFI_IF" masquerade
-
-# ISP2: el teléfono se une al bridge sin IP en el anfitrión, de modo que
-# solo R-EDGE usa esa conexión.
-ip addr flush dev "$TEL_IF"
-ip link set "$TEL_IF" master br-isp2
-ip link set "$TEL_IF" up
+# Cada teléfono se une a su bridge sin IP en el anfitrión, de modo que
+# solo R-EDGE usa esas conexiones.
+unir() {   # $1 interfaz del teléfono, $2 bridge
+  ip addr flush dev "$1"
+  ip link set "$1" master "$2"
+  ip link set "$1" up
+}
+unir "$TEL1_IF" br-isp1
+unir "$TEL2_IF" br-isp2
 ```
 
 `/etc/qemu/bridge.conf` en el anfitrión, para que QEMU pueda conectar las VM a los bridges:
@@ -88,12 +92,13 @@ ip link set "$TEL_IF" up
 allow all
 ```
 
-Con este esquema las direcciones WAN de R-EDGE quedan así:
+Las direcciones WAN de R-EDGE dependen de cada teléfono. En esta guía aparecen como marcadores: `192.168.41.x` para ISP1 y `192.168.42.x` para ISP2. En cada enlace, R-EDGE usa una IP libre de la red del teléfono, configurada a mano, y el gateway es la IP del teléfono.
 
-- **ISP1:** red `192.168.101.0/24`, R-EDGE `192.168.101.2`, gateway `192.168.101.1` (el anfitrión).
-- **ISP2:** la red que entrega el teléfono. Para verla, conecta el teléfono antes de ejecutar el script y anota la IP y el gateway que recibe el anfitrión (`ip addr show`, `ip route`). R-EDGE usa una IP libre de esa red, configurada a mano.
+**Verificar:**
 
-**Verificar:** que el gestor de red del anfitrión no vuelva a pedir IP en la interfaz del teléfono; si lo hace, márcala como no gestionada.
+- **Redes distintas:** dos teléfonos del mismo tipo pueden entregar la misma red (por ejemplo, los iPhone suelen usar `172.20.10.0/28`). R-EDGE no debe tener sus dos WAN en la misma subred; si coinciden, usa otro modelo de teléfono.
+- **Red estable:** algunos teléfonos cambian de red cada vez que se reactiva el anclaje. Tras cada reconexión, confirma que la red sigue siendo la anotada; si cambió, actualiza R-EDGE.
+- **Gestor de red del anfitrión:** no debe volver a pedir IP en las interfaces de los teléfonos; si lo hace, márcalas como no gestionadas.
 
 ### 1.4 Creación y arranque de las VM
 
@@ -134,7 +139,6 @@ vm.sh FW        2  1024 br-edge-fw br-fw-proxy br-dmz
 vm.sh PROXY     3  1024 br-fw-proxy br-proxy-r2
 vm.sh R2        4  512  br-proxy-r2 br-trunk
 vm.sh SW1       5  256  br-trunk br-p1 br-p2 br-p3 br-p4 br-p5 br-p6 br-p7
-vm.sh DHCP-SRV  6  256  br-p2
 vm.sh ZABBIX    7  2048 br-p5
 vm.sh SRV01     8  256  br-p6
 vm.sh VPN-SRV   9  256  br-dmz
@@ -142,6 +146,10 @@ vm.sh WEB01     10 256  br-dmz
 GUI=1 vm.sh PC-ADMIN01 11 2048 br-p1
 GUI=1 vm.sh PC-USER01  12 2048 br-p3
 GUI=1 vm.sh PC-USER02  13 2048 br-p4
+
+# Clientes de prueba: se arrancan solo cuando hacen falta.
+GUI=1 vm.sh PC-REMOTO   14 2048 br-isp1   # cliente VPN en el lado WAN
+GUI=1 vm.sh PC-INVITADO 15 2048 br-p2     # MAC no registrada en el DHCP
 ```
 
 La MAC de cada interfaz sale del `id`: PC-USER01 tiene `52:54:00:00:0c:00` y PC-USER02 `52:54:00:00:0d:00`. Son las que se registran en el DHCP restringido. Sin MAC explícita, todas las VM de QEMU arrancarían con la misma y la red fallaría.
@@ -151,9 +159,9 @@ La MAC de cada interfaz sale del `id`: PC-USER01 tiene `52:54:00:00:0c:00` y PC-
 - **Nombres de interfaz:** la guía usa `eth0`, `eth1`, … Si Debian las nombra `ens3` o `enp0s3`, añade `net.ifnames=0 biosdevname=0` a `GRUB_CMDLINE_LINUX` en `/etc/default/grub`, ejecuta `update-grub` y reinicia; o sustituye los nombres en cada archivo.
 - **SW1 como VM Debian:** el enunciado pide configurar los switches por consola, y un bridge Linux con filtrado de VLAN lo permite.
 - **Varios equipos físicos:** si un segmento une VMs de dos anfitriones, añade la interfaz Ethernet física al bridge de ese segmento en ambos (`ip link set <interfaz> master br-fw-proxy`) y conéctalos por cable.
-- **Debian como sistema principal:** si un nodo es un equipo físico, necesita tantas interfaces de red como indica la tabla (adaptadores USB-Ethernet si faltan). Si ese nodo es R-EDGE, la Wi-Fi y el teléfono son directamente sus interfaces WAN; no hacen falta `br-isp1` ni `br-isp2`, y sus nombres reales van en `mwan.conf`.
-- **Salida de ISP1 por cable:** si el anfitrión se conecta a Internet por Ethernet y no por Wi-Fi, esa interfaz sí puede unirse a `br-isp1` y R-EDGE toma una IP de la red real, sin NAT en el anfitrión.
-- **Sin IP pública:** si los ISP usan CGNAT, el cliente VPN remoto no podrá entrar desde Internet. En ese caso el cliente debe conectarse a la red del lado WAN y usar como `Endpoint` la IP WAN de R-EDGE.
+- **Debian como sistema principal:** si un nodo es un equipo físico, necesita tantas interfaces de red como indica la tabla (adaptadores USB-Ethernet si faltan). Si ese nodo es R-EDGE, los dos teléfonos se conectan a él y son directamente sus interfaces WAN; no hacen falta `br-isp1` ni `br-isp2`, y sus nombres reales (`usb0`, `usb1`, …) van en `mwan.conf` y en `/etc/network/interfaces`.
+- **Consumo de datos:** todo el tráfico del laboratorio sale por datos móviles. Instala los paquetes antes (sección 2.1) y evita descargas grandes durante las pruebas.
+- **Sin IP pública (cliente VPN):** las redes móviles casi siempre usan CGNAT, así que un cliente no podrá iniciar la VPN desde Internet. Como el enlace USB solo une el teléfono con R-EDGE, el cliente "remoto" debe conectarse al lado WAN: usa la VM PC-REMOTO en `br-isp1` (sección 1.4), dale una IP de la red del teléfono 1 y usa como `Endpoint` la IP WAN de R-EDGE en esa red. Un equipo real fuera del laboratorio solo sirve si algún teléfono tiene IP pública.
 - **Wireshark:** puede ejecutarse en el anfitrión capturando en `br-p7`, o en una VM cliente conectada a ese bridge.
 
 ## 2. Preparación común y orden de montaje
@@ -168,9 +176,8 @@ Los nodos no tendrán Internet hasta que toda la cadena funcione. Instala los pa
 | R-EDGE | `conntrack zabbix-agent` |
 | FW | `rsyslog suricata` |
 | PROXY | `squid-openssl openssl python3` |
-| R2 | `vlan` |
+| R2 | `vlan isc-dhcp-server` |
 | SW1 | `iproute2` (ya incluido) |
-| DHCP-SRV | `isc-dhcp-server` |
 | ZABBIX | `zabbix-server-mysql zabbix-frontend-php zabbix-agent mariadb-server apache2 libapache2-mod-php php-mysql` |
 | VPN-SRV | `wireguard` |
 | WEB01 / WEB02 | `nginx` y `ngrok` (ver 6.3) |
@@ -216,7 +223,7 @@ Asignación de puertos:
 |---|---|---|---|
 | eth0 | Troncal 802.1Q | 10, 20, 30, 40 | R2 eth1 |
 | eth1 | Acceso | 10 | PC-ADMIN01 |
-| eth2 | Acceso | 20 | DHCP-SRV |
+| eth2 | Acceso | 20 | Libre: cliente no registrado (prueba de DHCP) |
 | eth3 | Acceso | 20 | PC-USER01 |
 | eth4 | Acceso | 20 | PC-USER02 |
 | eth5 | Acceso | 30 | ZABBIX |
@@ -372,21 +379,14 @@ journalctl -k | grep ACL-DENY     # evidencia de bloqueos
 
 Las dos reglas de `eth0` existen porque el enunciado prohíbe duplicar funciones: R2 solo decide entre VLANs; lo que entra o sale de la LAN lo decide FW.
 
-### 3.4 DHCP-SRV: DHCP restringido por MAC (VLAN 20)
+### 3.4 R2: DHCP restringido por MAC (VLAN 20)
 
-`/etc/network/interfaces` en DHCP-SRV:
+El servicio DHCP corre en el propio R2 y escucha solo en la subinterfaz de la VLAN 20, así que ninguna otra VLAN recibe respuestas. No necesita red propia ni relay: usa la dirección `10.10.20.1` que R2 ya tiene en `eth1.20`. Tampoco hay que tocar las ACL, porque solo filtran el tráfico que atraviesa R2, no el que llega al propio router.
 
-```
-auto eth0
-iface eth0 inet static
-    address 10.10.20.2/25
-    gateway 10.10.20.1
-```
-
-`/etc/default/isc-dhcp-server`:
+`/etc/default/isc-dhcp-server` en R2:
 
 ```
-INTERFACESv4="eth0"
+INTERFACESv4="eth1.20"
 ```
 
 `/etc/dhcp/usuarios.csv` (registro de equipos autorizados; las MAC son las que asigna `vm.sh`, sección 1.4):
@@ -510,7 +510,7 @@ Esta restricción se suma a la ACL de R2, que ya impide que USERS llegue a la VL
 | Servicio permitido | `curl http://10.10.40.10` desde PC-USER01 | Responde |
 | Servicio denegado | `ssh 10.10.40.10` desde PC-USER01 | Bloqueado |
 | DHCP registrado | `dhclient -v eth0` en PC-USER01 | Recibe siempre 10.10.20.10 |
-| DHCP no registrado | Arrancar un cliente con otro `id` en `vm.sh` (otra MAC) y repetir | No recibe IP; en `journalctl -u isc-dhcp-server` hay DISCOVER sin OFFER |
+| DHCP no registrado | Arrancar PC-INVITADO (MAC sin registrar, puerto libre `br-p2`) y pedir IP | No recibe IP; en `journalctl -u isc-dhcp-server` de R2 hay DISCOVER sin OFFER |
 
 ## 4. Estudiante 2: proxy Squid transparente
 
@@ -804,10 +804,10 @@ El portal corre como el usuario `proxy` porque es el dueño de `access.log`. Usa
 
 ### 5.2 Red de R-EDGE
 
-> **Antes de aplicar: direcciones WAN.** Las dos salidas no se definen igual.
+> **Antes de aplicar: direcciones WAN.**
 >
-> - **ISP1 (Wi-Fi del anfitrión):** no depende del proveedor. R-EDGE ve la red `192.168.101.0/24` que crea `lab-net.sh` (sección 1.3), con el anfitrión como gateway `192.168.101.1`. Solo dependería del proveedor si el anfitrión sale por cable Ethernet o si R-EDGE es un equipo físico con la Wi-Fi como interfaz propia (sección 1.5).
-> - **ISP2 (teléfono por USB):** sí depende del teléfono. Los valores `192.168.42.x` de abajo son marcadores; hay que anotar la red y el gateway reales al conectarlo (sección 1.3).
+> - **ISP1 (teléfono 1) e ISP2 (teléfono 2):** las dos redes dependen de lo que entregue cada teléfono por USB. Los valores `192.168.41.x` y `192.168.42.x` de abajo son marcadores; usa la red y el gateway anotados en la sección 1.3.
+> - **Redes distintas:** R-EDGE no debe tener sus dos WAN en la misma subred (ver los puntos de verificación de la sección 1.3).
 >
 > Los valores reales deben coincidir en tres sitios: `/etc/network/interfaces` de R-EDGE, `/etc/multiwan/mwan.conf` y la tabla de `direccionamiento.md`.
 
@@ -816,11 +816,11 @@ El portal corre como el usuario `proxy` porque es el dueño de `access.log`. Usa
 ```
 auto eth0
 iface eth0 inet static
-    address 192.168.101.2/24      # ISP1: red de br-isp1 en el anfitrión
+    address 192.168.41.2/24       # ISP1: MARCADOR, usar la red del teléfono 1
 
 auto eth1
 iface eth1 inet static
-    address 192.168.42.2/24       # ISP2: MARCADOR, usar la red del teléfono
+    address 192.168.42.2/24       # ISP2: MARCADOR, usar la red del teléfono 2
 
 auto eth2
 iface eth2 inet static
@@ -844,9 +844,9 @@ net.ipv4.conf.default.rp_filter = 2
 
 ```bash
 ISP1_IF=eth0
-ISP1_GW=192.168.101.1    # el anfitrión en br-isp1
+ISP1_GW=192.168.41.1     # MARCADOR: gateway del teléfono 1
 ISP2_IF=eth1
-ISP2_GW=192.168.42.1     # MARCADOR: gateway del teléfono
+ISP2_GW=192.168.42.1     # MARCADOR: gateway del teléfono 2
 LAN_IF=eth2
 CHECK_IP=1.1.1.1
 INTERVALO=5
@@ -1040,7 +1040,7 @@ El agente expone el tráfico de entrada y salida de `eth0` (ISP1) y `eth1` (ISP2
 | Recuperación | En el anfitrión: `ip link set br-isp1 up` | Vuelve `ISP1=up ISP2=up` y la política normal |
 | Zabbix | Dashboard desde PC-ADMIN01 | Gráficas de entrada y salida de ambos ISP |
 
-El failover se provoca cortando el enlace fuera de R-EDGE: bajando el bridge en el anfitrión, desconectando el teléfono o apagando sus datos. No apagues la interfaz dentro de R-EDGE con `ip link set down`, porque eso también borra sus rutas.
+El failover se provoca cortando el enlace fuera de R-EDGE: bajando el bridge en el anfitrión, desconectando el teléfono o apagando sus datos móviles. No apagues la interfaz dentro de R-EDGE con `ip link set down`, porque eso también borra sus rutas.
 
 ## 6. Estudiante 4: VPN WireGuard y DMZ
 
@@ -1081,7 +1081,7 @@ No hay reglas de NAT a propósito: el tráfico sale de VPN-SRV con su IP `10.200
 #!/bin/bash
 # Uso: wg-add-peer.sh <nombre> <admin|user> <ultimo_octeto> [full]
 set -e
-ENDPOINT="<IP_WAN_DE_R-EDGE>:51820"
+ENDPOINT="<IP_WAN_DE_R-EDGE>:51820"   # IP de R-EDGE en la red del teléfono 1 (ver 1.5)
 nombre=$1; tipo=$2; octeto=$3; modo=${4:-split}
 
 case "$tipo" in
@@ -1404,7 +1404,7 @@ Captura sugerida para la entrega: el saludo de WireGuard (UDP 51820) en `eth0` d
 | Flujo | Prueba | Componentes que demuestra |
 |---|---|---|
 | A: navegación | PC-USER01 abre un sitio permitido y uno bloqueado | ACL de R2, Squid, firewall, Multi-WAN |
-| A: failover | Repetir con ISP1 suspendido | Failover y recuperación |
+| A: failover | Repetir con ISP1 caído (`br-isp1` abajo en el anfitrión) | Failover y recuperación |
 | B: VPN | Peer admin1 y peer user1 acceden a las VLAN | WireGuard, DNAT de R-EDGE, políticas de FW |
 | C: ngrok | Un usuario externo abre la URL pública | DMZ, salida controlada por FW y Multi-WAN |
 | Monitoreo | Dashboard de Zabbix durante las pruebas | Métricas de ISP1 e ISP2 |
@@ -1414,7 +1414,7 @@ Captura sugerida para la entrega: el saludo de WireGuard (UDP 51820) en `eth0` d
 | Síntoma | Qué revisar |
 |---|---|
 | Dos VM del mismo segmento no se ven | En el anfitrión: `bridge link` (cada tap en su bridge), MAC únicas, y `sysctl net.bridge.bridge-nf-call-iptables` en 0 si existe |
-| R-EDGE sin salida por ISP1 | En el anfitrión: `ip_forward`, la regla `masquerade` de `lab-net.sh` y que su firewall no bloquee el reenvío |
+| R-EDGE sin salida por un ISP | Anclaje USB activo en el teléfono, su interfaz dentro del bridge (`bridge link` en el anfitrión) y que la red del teléfono no haya cambiado |
 | Sin ping entre equipos de la misma VLAN | `bridge vlan show` en SW1 |
 | Sin ping entre VLANs | `ip_forward` en R2 y `nft list ruleset` |
 | VLAN sin Internet | Rutas de retorno en PROXY y FW; `ip route get 8.8.8.8` en cada salto |
