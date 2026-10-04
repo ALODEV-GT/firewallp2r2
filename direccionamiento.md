@@ -9,6 +9,7 @@ Cadena principal: ISP1/ISP2 → R-EDGE → FW → PROXY → R2 → VLANs. La DMZ
 - **SW1 en Ubuntu:** SW1 es un Open vSwitch en el anfitrión del estudiante 1, que usa Ubuntu. El catedrático autorizó Ubuntu para este equipo.
 - **DHCP en R2:** el servicio DHCP restringido corre en R2 y escucha solo en `eth1.20`. El diagrama del enunciado lo dibuja dentro de la VLAN de Usuarios; si se exige un equipo aparte, puede moverse a una VM en esa VLAN con los mismos archivos.
 - **Rangos VPN:** VPN-ADMIN usa `10.200.10.0/28` y VPN-USERS `10.200.20.0/27`, definidos por el encargado de la VPN. Son más pequeños que el ejemplo `/24` del enunciado; el firewall y las rutas deben usar estos mismos rangos.
+- **DNS de las VLAN 10 y 20:** sus clientes usan como DNS la caché de PROXY (`10.10.0.9`), para que Squid y los clientes resuelvan igual. Hacia Internet, esas consultas salen con la IP `10.10.0.6`.
 - **Puertos elegidos:** 51820 para WireGuard y 8080 para el portal de Squid.
 - **VPN-ADMIN hacia Zabbix:** el enunciado restringe el dashboard a la VLAN de Administración; quitar esa regla si se interpreta de forma estricta.
 
@@ -143,6 +144,7 @@ Las reglas entre VLANs son ACL de R2 (estudiante 1); las demás son del firewall
 | ZABBIX | VLAN SERVERS | TCP 10050, UDP 161, ICMP | Permitir |
 | ZABBIX | R-EDGE | TCP 10050, ICMP | Permitir |
 | R-EDGE | ZABBIX | TCP 10051 | Permitir |
+| VLAN ADMIN / USERS | PROXY (caché DNS, 10.10.0.9) | UDP/TCP 53 | Permitir |
 | VLAN ADMIN | PROXY (portal) | TCP 8080 | Permitir |
 | Cualquier otro | PROXY (portal) | TCP 8080 | Denegar |
 | VLAN ADMIN / USERS | Internet | TCP 80, 443; UDP/TCP 53 | Permitir |
@@ -150,6 +152,7 @@ Las reglas entre VLANs son ACL de R2 (estudiante 1); las demás son del firewall
 | PROXY (10.10.0.6) | Internet | UDP/TCP 53 | Permitir |
 | VLAN ADMIN | Internet | ICMP (ping) | Permitir |
 | VLAN ADMIN, VPN-ADMIN | FW (el propio firewall) | TCP 22, ICMP | Permitir |
+| R-EDGE, PROXY, VPN-SRV | FW (el propio firewall) | ICMP (ping) | Permitir |
 | VLAN ADMIN | DMZ | TCP 22, 80, 443; ICMP | Permitir |
 | VLAN USERS | DMZ | TCP 80, 443 | Permitir |
 | DMZ | VLANs internas | Todos | Denegar |

@@ -2,7 +2,14 @@
 
 Esta guía aplica el plan de `direccionamiento.md`. Todas las direcciones, rutas y reglas salen de ese archivo; si cambian allí, hay que cambiarlas aquí.
 
-> **Estado:** estas configuraciones no se han ejecutado todavía. Están escritas para Debian 13, pero hay que probarlas nodo por nodo en el orden de la sección 2. Los puntos con más riesgo están marcados con **Verificar**.
+> **Estado:** estas configuraciones no se han ejecutado todavía en los equipos reales. Sí se validaron en un contenedor Debian 13 con las herramientas reales:
+>
+> - **Sintaxis:** las reglas de nftables de R2, PROXY y FW, `squid.conf`, `dhcpd.conf` con sus reservas, las reglas de Suricata y todos los scripts.
+> - **Funcionamiento del proxy:** intercepción con TPROXY, bloqueo por lista en HTTP y HTTPS, registro y recarga de listas, contra sitios reales.
+> - **Lógica del Multi-WAN:** generación de reglas desde `politicas.conf` y los cambios de rutas del failover, con interfaces simuladas.
+> - **Open vSwitch y WireGuard:** creación de puertos, VLAN y espejo, y el script de peers, sin tráfico real.
+>
+> No se ha probado nada con los enlaces físicos, los teléfonos ni el recorrido completo entre equipos. Hay que montarlo en el orden de la sección 2.3; los puntos con más riesgo están marcados con **Verificar**.
 >
 > El enunciado exige que cada integrante pueda explicar su parte. Cada sección dice qué hace cada bloque para que sirva de base a esa explicación.
 
@@ -25,71 +32,80 @@ No se usa GNS3. Cada nodo es una máquina virtual QEMU/KVM con Debian 13, o un e
 | SRV01 | VM QEMU Debian 13 | Texto | 1 | 256 MB |
 | PC-ADMIN01, PC-USER01 | VM QEMU Debian 13 con escritorio XFCE | Gráfico (permitido para clientes) | 1 | 2 GB |
 | PC-USER02 | VM QEMU Debian 13 | Texto | 1 | 512 MB |
-| PC-REMOTO (cliente VPN) | VM QEMU Debian con escritorio conectada a `br-isp1` (ver 1.5) | Gráfico | 1 | 2 GB |
+| PC-REMOTO (cliente VPN) | VM QEMU Debian con escritorio en el anfitrión del estudiante 3, conectada a `br-isp1` (ver 1.5) | Gráfico | 1 | 2 GB |
 | Anfitrión | Equipo Linux que ejecuta QEMU y los bridges | — | — | — |
 
-### 1.2 Bridges del anfitrión
+### 1.2 Bridges de cada anfitrión
 
-| Bridge | Segmento | Interfaces conectadas |
+Cada anfitrión crea solo los bridges de los segmentos que tocan sus VM:
+
+| Bridge | Anfitrión | Segmento | Interfaces conectadas |
+|---|---|---|---|
+| br-isp1 | Estudiante 3 | ISP1 | R-EDGE eth0, interfaz USB del teléfono 1, PC-REMOTO |
+| br-isp2 | Estudiante 3 | ISP2 | R-EDGE eth1, interfaz USB del teléfono 2 |
+| br-edge-fw | Estudiante 3 | 10.10.0.0/30 | R-EDGE eth2, interfaz Ethernet del cable hacia FW |
+| br-proxy-r2 | Estudiante 1 | 10.10.0.8/30 | R2 eth0, interfaz Ethernet del cable hacia PROXY |
+| br-dmz | Estudiante 4 | 10.10.50.0/28 | VPN-SRV, WEB01, WEB02, interfaz Ethernet del cable hacia FW |
+
+El enlace FW – PROXY (`10.10.0.4/30`) no usa bridge: los dos son equipos físicos y se conectan con un cable directo.
+
+La LAN interna tampoco usa bridges Linux: R2 y los equipos de las VLAN se conectan a puertos de SW1, el Open vSwitch del anfitrión del estudiante 1. Sus puertos están en la sección 3.1.
+
+### 1.3 Red de cada anfitrión
+
+`/usr/local/sbin/lab-net.sh` es el mismo script en los tres anfitriones; solo cambian sus dos variables:
+
+```bash
+#!/bin/bash
+# Crea los bridges de este anfitrión y les une sus interfaces físicas.
+# Ajusta BRIDGES y UNIONES según la tabla de abajo.
+set -e
+BRIDGES="br-isp1 br-isp2 br-edge-fw"
+UNIONES="usb0:br-isp1 usb1:br-isp2 enp3s0:br-edge-fw"     # pares interfaz:bridge
+
+for br in $BRIDGES; do
+  ip link add "$br" type bridge 2>/dev/null || true
+  ip link set "$br" up
+done
+
+# Cada interfaz se une a su bridge sin IP en el anfitrión, de modo que
+# solo las VM usan ese enlace.
+for par in $UNIONES; do
+  ifc=${par%%:*}; br=${par##*:}
+  ip addr flush dev "$ifc"
+  ip link set "$ifc" master "$br"
+  ip link set "$ifc" up
+done
+```
+
+| Anfitrión | `BRIDGES` | `UNIONES` |
 |---|---|---|
-| br-isp1 | ISP1 | R-EDGE eth0, interfaz USB del teléfono 1, PC-REMOTO |
-| br-isp2 | ISP2 | R-EDGE eth1, interfaz USB del teléfono 2 |
-| br-edge-fw | 10.10.0.0/30 | R-EDGE eth2, FW eth0 |
-| br-fw-proxy | 10.10.0.4/30 | FW eth1, PROXY eth0 |
-| br-proxy-r2 | 10.10.0.8/30 | PROXY eth1, R2 eth0 |
-| br-dmz | 10.10.50.0/28 | FW eth2, VPN-SRV, WEB01, WEB02 |
+| Estudiante 3 | `br-isp1 br-isp2 br-edge-fw` | teléfono 1 a `br-isp1`, teléfono 2 a `br-isp2`, Ethernet del cable hacia FW a `br-edge-fw` |
+| Estudiante 1 | `br-proxy-r2` | Ethernet del cable hacia PROXY a `br-proxy-r2` |
+| Estudiante 4 | `br-dmz` | Ethernet del cable hacia FW a `br-dmz` |
 
-La LAN interna no usa bridges Linux: R2 y los equipos de las VLAN se conectan a puertos de SW1, el Open vSwitch del anfitrión del estudiante 1. Sus puertos están en la sección 3.1.
+Los nombres de interfaz (`usb0`, `enp3s0`, …) son ejemplos; los reales se ven con `ip link`. La interfaz que se une a un bridge pierde su IP en el anfitrión, así que el anfitrión debe tener su propia conexión por otra interfaz si la necesita.
 
-### 1.3 Red del anfitrión
+`/etc/qemu/bridge.conf` en cada anfitrión, para que QEMU pueda conectar las VM a los bridges:
 
-Los dos ISP son dos teléfonos celulares conectados por USB al anfitrión, con el anclaje de red por USB activado. Cada teléfono aparece en el anfitrión como una interfaz de red (`usb0`, `usb1` o un nombre del tipo `enx…`).
+```
+allow all
+```
 
-Antes de ejecutar el script hay que anotar la red de cada teléfono, porque después el anfitrión ya no tendrá IP en ellas:
+**Teléfonos (anfitrión del estudiante 3).** Los dos ISP son dos teléfonos celulares conectados por USB al anfitrión, con el anclaje de red por USB activado. Cada teléfono aparece como una interfaz de red (`usb0`, `usb1` o un nombre del tipo `enx…`). Antes de ejecutar el script hay que anotar la red de cada teléfono, porque después el anfitrión ya no tendrá IP en ellas:
 
 1. Conecta el primer teléfono y activa el anclaje por USB.
 2. Ejecuta `ip -4 addr show` e `ip route` en el anfitrión, y anota la interfaz, la IP y máscara recibidas y el gateway (la IP del teléfono).
 3. Repite con el segundo teléfono.
 4. Comprueba que las dos redes sean distintas.
 
-`/usr/local/sbin/lab-net.sh` en el anfitrión (ajusta `TEL1_IF` y `TEL2_IF` a los nombres anotados):
-
-```bash
-#!/bin/bash
-# Crea los bridges del laboratorio y une cada teléfono a su bridge de ISP.
-set -e
-TEL1_IF=usb0           # teléfono 1 (ISP1)
-TEL2_IF=usb1           # teléfono 2 (ISP2)
-
-for br in br-isp1 br-isp2 br-edge-fw br-fw-proxy br-proxy-r2 br-dmz; do
-  ip link add "$br" type bridge 2>/dev/null || true
-  ip link set "$br" up
-done
-
-# Cada teléfono se une a su bridge sin IP en el anfitrión, de modo que
-# solo R-EDGE usa esas conexiones.
-unir() {   # $1 interfaz del teléfono, $2 bridge
-  ip addr flush dev "$1"
-  ip link set "$1" master "$2"
-  ip link set "$1" up
-}
-unir "$TEL1_IF" br-isp1
-unir "$TEL2_IF" br-isp2
-```
-
-`/etc/qemu/bridge.conf` en el anfitrión, para que QEMU pueda conectar las VM a los bridges:
-
-```
-allow all
-```
-
-Las direcciones WAN de R-EDGE dependen de cada teléfono. En esta guía aparecen como marcadores: `192.168.41.x` para ISP1 y `192.168.42.x` para ISP2. En cada enlace, R-EDGE usa una IP libre de la red del teléfono, configurada a mano, y el gateway es la IP del teléfono.
+Las direcciones WAN de R-EDGE dependen de cada teléfono. En esta guía aparecen como marcadores: `192.168.41.x` para ISP1 y `192.168.42.x` para ISP2. En cada enlace, R-EDGE usa una IP fija de la red del teléfono, configurada a mano, y el gateway es la IP del teléfono. Conviene elegir una IP alta de la red (por ejemplo, terminada en `.200`), porque el teléfono reparte las bajas por DHCP a otros equipos, como PC-REMOTO.
 
 **Verificar:**
 
 - **Redes distintas:** dos teléfonos del mismo tipo pueden entregar la misma red (por ejemplo, los iPhone suelen usar `172.20.10.0/28`). R-EDGE no debe tener sus dos WAN en la misma subred; si coinciden, usa otro modelo de teléfono.
 - **Red estable:** algunos teléfonos cambian de red cada vez que se reactiva el anclaje. Tras cada reconexión, confirma que la red sigue siendo la anotada; si cambió, actualiza R-EDGE.
-- **Gestor de red del anfitrión:** no debe volver a pedir IP en las interfaces de los teléfonos; si lo hace, márcalas como no gestionadas.
+- **Gestor de red del anfitrión:** no debe volver a pedir IP en las interfaces unidas a un bridge; si lo hace, márcalas como no gestionadas.
 
 ### 1.4 Creación y arranque de las VM
 
@@ -128,22 +144,26 @@ exec qemu-system-x86_64 -enable-kvm -name "$nombre" -m "$ram" \
   "${pantalla[@]}" "${red[@]}"
 ```
 
-Arranque de cada nodo, como root y cada uno en su propia terminal (o en ventanas de `tmux`):
+Arranque de cada nodo en el anfitrión de su encargado, como root y cada uno en su propia terminal (o en ventanas de `tmux`). El estudiante 4 gestiona sus VM con libvirt en lugar de `vm.sh`; lo que importa es que su interfaz quede en `br-dmz`.
 
 ```bash
+# Anfitrión del estudiante 3
 vm.sh R-EDGE    1  512  br-isp1 br-isp2 br-edge-fw
-# FW y PROXY son equipos físicos: no se arrancan con vm.sh.
+GUI=1 vm.sh PC-REMOTO 14 2048 br-isp1        # cliente VPN en el lado WAN; solo para esa prueba
+
+# Anfitrión del estudiante 1 (después de sw1-ovs.sh, sección 3.1)
 vm.sh R2        4  512  br-proxy-r2 tap:tap-r2
 vm.sh ZABBIX    7  2048 tap:tap-zabbix
 vm.sh SRV01     8  256  tap:tap-srv01
-vm.sh VPN-SRV   9  256  br-dmz
-vm.sh WEB01     10 256  br-dmz
 GUI=1 vm.sh PC-ADMIN01 11 2048 tap:tap-admin01
 GUI=1 vm.sh PC-USER01  12 2048 tap:tap-user01
 vm.sh PC-USER02        13 512  tap:tap-user02
 
-# Cliente de prueba: se arranca solo cuando hace falta.
-GUI=1 vm.sh PC-REMOTO   14 2048 br-isp1   # cliente VPN en el lado WAN
+# Anfitrión del estudiante 4 (o sus equivalentes en libvirt)
+vm.sh VPN-SRV   9  256  br-dmz
+vm.sh WEB01     10 256  br-dmz
+
+# FW y PROXY son equipos físicos: no se arrancan con vm.sh.
 ```
 
 La MAC de cada interfaz sale del `id`: PC-USER01 tiene `52:54:00:00:0c:00` y PC-USER02 `52:54:00:00:0d:00`. Son las que se registran en el DHCP restringido. Sin MAC explícita, todas las VM de QEMU arrancarían con la misma y la red fallaría.
@@ -152,10 +172,10 @@ La MAC de cada interfaz sale del `id`: PC-USER01 tiene `52:54:00:00:0c:00` y PC-
 
 - **Nombres de interfaz:** la guía usa `eth0`, `eth1`, … Si Debian las nombra `ens3` o `enp0s3`, añade `net.ifnames=0 biosdevname=0` a `GRUB_CMDLINE_LINUX` en `/etc/default/grub`, ejecuta `update-grub` y reinicia; o sustituye los nombres en cada archivo.
 - **SW1 como Open vSwitch:** el enunciado pide configurar los switches por consola, y Open vSwitch se administra con `ovs-vsctl`. Corre en el anfitrión del estudiante 1, que usa Ubuntu; el catedrático autorizó Ubuntu para este equipo.
-- **Varios equipos físicos:** cada integrante trabaja en su propio equipo, así que los segmentos que unen dos componentes cruzan de una máquina a otra por cable. En cada extremo, la interfaz Ethernet física se une al bridge de ese segmento (`ip link set <interfaz> master br-proxy-r2`), o es directamente la interfaz del nodo si este es un equipo físico. Por ejemplo, `eth0` de R2 sale por `br-proxy-r2` en el anfitrión del estudiante 1 y llega por cable al PROXY, que es un equipo físico. `lab-net.sh` crea todos los bridges; cada anfitrión solo necesita los de sus propios nodos.
+- **Varios equipos físicos:** cada integrante trabaja en su propio equipo, así que los segmentos que unen dos componentes cruzan de una máquina a otra por cable. En cada extremo, la interfaz Ethernet física se une al bridge de ese segmento (`ip link set <interfaz> master br-proxy-r2`), o es directamente la interfaz del nodo si este es un equipo físico. Por ejemplo, `eth0` de R2 sale por `br-proxy-r2` en el anfitrión del estudiante 1 y llega por cable al PROXY, que es un equipo físico. Los bridges de cada anfitrión están en la sección 1.2.
 - **Debian como sistema principal:** si un nodo es un equipo físico, necesita tantas interfaces de red como indica la tabla (adaptadores USB-Ethernet si faltan). Es el caso de FW y PROXY; sus nombres reales de interfaz sustituyen a `eth0`, `eth1`, … (secciones 4.2 y 7.1).
 - **Consumo de datos:** todo el tráfico del laboratorio sale por datos móviles. Instala los paquetes antes (sección 2.1) y evita descargas grandes durante las pruebas.
-- **Sin IP pública (cliente VPN):** las redes móviles casi siempre usan CGNAT, así que un cliente no podrá iniciar la VPN desde Internet. Como el enlace USB solo une el teléfono con R-EDGE, el cliente "remoto" debe conectarse al lado WAN: usa la VM PC-REMOTO en `br-isp1` (sección 1.4), dale una IP de la red del teléfono 1 y usa como `Endpoint` la IP WAN de R-EDGE en esa red. Un equipo real fuera del laboratorio solo sirve si algún teléfono tiene IP pública.
+- **Sin IP pública (cliente VPN):** las redes móviles casi siempre usan CGNAT, así que un cliente no podrá iniciar la VPN desde Internet. Como el enlace USB solo une el teléfono con R-EDGE, el cliente "remoto" debe conectarse al lado WAN: usa la VM PC-REMOTO en `br-isp1`, en el anfitrión del estudiante 3 (sección 1.4). Toma su IP por DHCP del teléfono 1, usa un perfil de WireGuard entregado por el estudiante 4 y tiene como `Endpoint` la IP WAN de R-EDGE en esa red. Un equipo real fuera del laboratorio solo sirve si algún teléfono tiene IP pública.
 - **Wireshark:** se ejecuta en el anfitrión de SW1 capturando en `span0`, el puerto espejo del switch (sección 3.1).
 
 ### 1.6 Reparto real por equipos y cableado
@@ -204,7 +224,7 @@ Los nodos no tendrán Internet hasta que toda la cadena funcione. Instala los pa
 | Todos | `nftables tcpdump curl` |
 | R-EDGE | `conntrack zabbix-agent` |
 | FW | `rsyslog suricata` |
-| PROXY | `squid-openssl openssl python3` |
+| PROXY | `squid-openssl openssl python3 dnsmasq` |
 | R2 | `vlan isc-dhcp-server` |
 | Anfitrión de SW1 (Ubuntu) | `openvswitch-switch` |
 | ZABBIX | `zabbix-server-mysql zabbix-frontend-php zabbix-agent mariadb-server apache2 libapache2-mod-php php-mysql` |
@@ -226,7 +246,15 @@ En los nodos que enrutan (R-EDGE, FW, PROXY, R2, VPN-SRV), crea `/etc/sysctl.d/9
 net.ipv4.ip_forward = 1
 ```
 
-Y aplícalo con `sysctl --system`. La red de cada nodo se define en `/etc/network/interfaces` y se aplica con `systemctl restart networking`.
+Y aplícalo con `sysctl --system`. La red de cada nodo se define en `/etc/network/interfaces` y se aplica con `systemctl restart networking`; PROXY es la excepción, porque usa NetworkManager (sección 4.2).
+
+Servidores DNS de cada equipo:
+
+| Equipo | DNS | Motivo |
+|---|---|---|
+| Clientes de las VLAN 10 y 20 | `10.10.0.9` (PROXY) | Deben resolver con la misma caché que Squid (sección 4.4) |
+| PROXY | `127.0.0.1` | Usa su propia caché DNS |
+| Resto de nodos | `8.8.8.8` | No pasan por Squid |
 
 ### 2.3 Orden de montaje
 
@@ -439,7 +467,7 @@ subnet 10.10.20.0 netmask 255.255.255.128 {
   option routers 10.10.20.1;
   option subnet-mask 255.255.255.128;
   option broadcast-address 10.10.20.127;
-  option domain-name-servers 8.8.8.8, 1.1.1.1;
+  option domain-name-servers 10.10.0.9;       # caché DNS de PROXY
   # Sin "range": no existe un pool dinámico del que repartir.
 }
 
@@ -485,7 +513,7 @@ iface eth0 inet static
     gateway 10.10.30.1
 ```
 
-Instalación con los paquetes de Debian. **Verificar** las rutas de los esquemas con `dpkg -L zabbix-server-mysql`, porque cambian entre versiones del paquete:
+Instalación con los paquetes de Debian 13 (Zabbix 7.0). Las rutas de los esquemas son las de ese paquete:
 
 ```bash
 mysql -e "CREATE DATABASE zabbix CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
@@ -510,7 +538,7 @@ a2enconf zabbix-frontend-php
 systemctl enable --now zabbix-server apache2
 ```
 
-Restringe la interfaz web a la VLAN de Administración en la configuración de Apache del frontend (bloque `<Directory>` de Zabbix):
+Restringe la interfaz web a la VLAN de Administración en `/etc/apache2/conf-available/zabbix-frontend-php.conf`, dentro del bloque `<Directory>` del frontend, y recarga Apache (`systemctl reload apache2`):
 
 ```apache
 Require ip 10.10.10.0/27
@@ -524,9 +552,9 @@ Esta restricción se suma a la ACL de R2, que ya impide que USERS llegue a la VL
 
 ### 3.6 Clientes de las VLAN
 
-- **PC-ADMIN01:** estática `10.10.10.10/27`, gateway `10.10.10.1`, DNS `8.8.8.8`.
+- **PC-ADMIN01:** estática `10.10.10.10/27`, gateway `10.10.10.1`, DNS `10.10.0.9` (PROXY).
 - **SRV01:** estática `10.10.40.10/27`, gateway `10.10.40.1`; instala `nginx` para probar el acceso por 80/443.
-- **PC-USER01 / PC-USER02:** DHCP (`iface eth0 inet dhcp` o el gestor de red del escritorio).
+- **PC-USER01 / PC-USER02:** DHCP (`iface eth0 inet dhcp` o el gestor de red del escritorio). Reciben por DHCP el DNS `10.10.0.9`.
 
 ### 3.7 Pruebas del estudiante 1
 
@@ -548,6 +576,7 @@ PROXY está en línea entre R2 y FW, así que todo el tráfico de las VLAN lo at
 
 - **HTTP (puerto 80):** Squid lee la cabecera `Host` y aplica la lista.
 - **HTTPS (puerto 443):** Squid no descifra. Lee el nombre del sitio en el SNI del saludo TLS (`peek`); si está en la lista corta la conexión (`terminate`), y si no la deja pasar intacta (`splice`).
+- **Caché DNS compartida:** antes de dejar pasar una conexión HTTPS, Squid comprueba que la IP de destino corresponda al nombre del sitio, resolviéndolo él mismo. Si el cliente y Squid preguntan a servidores DNS distintos, muchos sitios devuelven IPs diferentes a cada uno y Squid rechaza la conexión (error 409). Por eso PROXY ejecuta una caché DNS (`dnsmasq`) que usan tanto los clientes como Squid. En las pruebas, sin la caché falló cerca del 10 % de las conexiones HTTPS permitidas; con ella, ninguna.
 
 ### 4.2 Red y enrutamiento de PROXY
 
@@ -630,7 +659,29 @@ table ip proxy {
 
 El resto del tráfico (DNS, SSH, VPN, etc.) no coincide con las reglas de desvío y se enruta normalmente hacia el firewall y el Multi-WAN, como pide el enunciado.
 
-### 4.4 Squid
+Si Squid está detenido, las reglas de desvío no encuentran a quién entregar la conexión y el tráfico web pasa sin filtrar. Hay que comprobar que Squid esté activo antes de cada demostración (`systemctl status squid`).
+
+### 4.4 Caché DNS y Squid
+
+`/etc/dnsmasq.d/xelaju.conf` en PROXY:
+
+```
+# Caché DNS para los clientes de las VLAN y para Squid.
+no-resolv
+server=8.8.8.8
+server=1.1.1.1
+listen-address=127.0.0.1,10.10.0.9
+bind-interfaces
+cache-size=2000
+min-cache-ttl=300
+```
+
+```bash
+echo "nameserver 127.0.0.1" > /etc/resolv.conf
+systemctl enable --now dnsmasq
+```
+
+`min-cache-ttl` mantiene cada respuesta al menos cinco minutos, para que el cliente y Squid vean la misma IP aunque el sitio la cambie con frecuencia.
 
 Certificado para el puerto HTTPS (solo lo exige Squid para abrir el puerto; no se usa para descifrar):
 
@@ -668,6 +719,9 @@ http_port 3128
 http_port 3129 tproxy
 https_port 3130 tproxy ssl-bump tls-cert=/etc/squid/ssl/squid.pem generate-host-certificates=off
 
+# Squid resuelve con la caché DNS local, la misma que usan los clientes.
+dns_nameservers 127.0.0.1
+
 # Redes de origen.
 acl admin_net src 10.10.10.0/27
 acl users_net src 10.10.20.0/25
@@ -695,7 +749,7 @@ http_access deny all
 
 # Registro: fecha, IP origen, resultado, método, URL, SNI, acción TLS, bytes.
 logformat xelaju %{%Y-%m-%dT%H:%M:%S}tl %>a %Ss/%03>Hs %rm %ru %ssl::>sni %ssl::bump_mode %<st
-access_log /var/log/squid/access.log xelaju
+access_log stdio:/var/log/squid/access.log xelaju
 
 cache deny all
 visible_hostname proxy.xelaju.local
@@ -709,7 +763,7 @@ systemctl restart squid
 
 Para cambiar una política durante la calificación: edita el archivo de lista y ejecuta `squid -k reconfigure`. No se toca `squid.conf`.
 
-**Verificar:** que `squid -v` muestre `--with-openssl` (lo aporta el paquete `squid-openssl`) y que `squid -k parse` acepte las opciones `tproxy` y `ssl-bump`.
+Squid debe ser el del paquete `squid-openssl`: `squid -v` tiene que mostrar `--with-openssl`. El paquete `squid` normal no acepta `ssl-bump`.
 
 ### 4.5 Portal de administración y consulta
 
@@ -733,13 +787,22 @@ def parse(line):
     if len(p) < 8:
         return None
     when, src, result, method, url, sni, mode = p[:7]
+    blocked = "DENIED" in result or mode == "terminate"
+    # Squid registra pasos intermedios de cada conexión HTTPS; solo interesa el final.
+    if result.startswith("NONE_NONE/000") and not blocked:
+        return None
     if sni != "-":
         domain = sni
     else:
         domain = urlparse(url if "://" in url else "//" + url).hostname or url
-    blocked = "DENIED" in result or mode == "terminate"
+    if blocked:
+        action = "BLOQUEADO"
+    elif result.endswith("/409"):
+        action = "ERROR"
+    else:
+        action = "PERMITIDO"
     return {"when": when, "src": src, "method": method, "domain": domain,
-            "result": result, "action": "BLOQUEADO" if blocked else "PERMITIDO"}
+            "result": result, "action": action}
 
 
 def load(ip, dom):
@@ -832,6 +895,8 @@ El portal corre como el usuario `proxy` porque es el dueño de `access.log`. Usa
 | Portal permitido | PC-ADMIN01: `http://10.10.0.9:8080` | Muestra registros |
 | Portal denegado | PC-USER01: misma URL | Sin acceso; `PORTAL-DENY` en `journalctl -k` |
 | Logs | `tail -f /var/log/squid/access.log` | IP, fecha, dominio, método, resultado |
+| DNS compartido | PC-USER01: `cat /etc/resolv.conf` | `nameserver 10.10.0.9` |
+| Sin errores 409 | `grep -c '/409' /var/log/squid/access.log` tras navegar | 0 |
 
 ## 5. Estudiante 3: Multi-WAN, balanceo y failover
 
@@ -903,7 +968,10 @@ INTERVALO=5
 10.10.10.0/27, [443], TCP, ISP1
 10.10.40.0/27, [443], TCP, ISP2
 10.10.10.10, [22], TCP, ISP2
+10.10.0.6, [53], UDP, ISP2
 ```
+
+Las consultas DNS de las VLAN 10 y 20 llegan a Internet con la IP de PROXY (`10.10.0.6`), porque las resuelve su caché; la última línea las envía por ISP2. La línea de `10.10.20.10` con el puerto 53 solo aplica si ese equipo consulta directamente a un servidor externo (por ejemplo, `dig @8.8.8.8`).
 
 ### 5.4 Script de políticas y NAT
 
@@ -970,10 +1038,18 @@ nft -f "$NFT"
 # Tablas fijas por ISP y reglas base.
 ip route replace default via "$ISP1_GW" dev "$ISP1_IF" table 101
 ip route replace default via "$ISP2_GW" dev "$ISP2_IF" table 102
+# Cada tabla conoce también la red de su propio enlace, para responder
+# directamente a los equipos del lado WAN (por ejemplo, PC-REMOTO).
+for par in "$ISP1_IF:101" "$ISP2_IF:102"; do
+  ifc=${par%%:*}; tabla=${par##*:}
+  ip -4 route show dev "$ifc" scope link | while read -r red _; do
+    ip route replace "$red" dev "$ifc" table "$tabla"
+  done
+done
 for p in 100 110 111; do ip rule del prio "$p" 2>/dev/null || true; done
 ip rule add prio 100 to 10.0.0.0/8 lookup main        # destinos internos
-ip rule add prio 110 fwmark 0x11 lookup 101           # sondeo de ISP1
-ip rule add prio 111 fwmark 0x12 lookup 102           # sondeo de ISP2
+ip rule add prio 110 fwmark 17 lookup 101             # sondeo de ISP1
+ip rule add prio 111 fwmark 18 lookup 102             # sondeo de ISP2
 echo "Politicas aplicadas."
 ```
 
@@ -1020,7 +1096,7 @@ aplicar() {  # $1 estado ISP1, $2 estado ISP2
 /usr/local/sbin/mwan-apply.sh
 previo=""
 while true; do
-  actual="$(sondeo "$ISP1_IF" 0x11) $(sondeo "$ISP2_IF" 0x12)"
+  actual="$(sondeo "$ISP1_IF" 17) $(sondeo "$ISP2_IF" 18)"
   if [[ "$actual" != "$previo" ]]; then
     aplicar $actual
     previo="$actual"
@@ -1050,7 +1126,7 @@ chmod +x /usr/local/sbin/mwan-*.sh
 systemctl enable --now multiwan.service
 ```
 
-Los sondeos usan marcas propias (0x11 y 0x12) que siempre apuntan a la tabla de su ISP. Así el servicio puede detectar que un enlace volvió aunque en ese momento no tenga tráfico.
+Los sondeos usan marcas propias (17 y 18) que siempre apuntan a la tabla de su ISP. Van en decimal porque `ping -m` no acepta hexadecimal. Así el servicio puede detectar que un enlace volvió aunque en ese momento no tenga tráfico.
 
 ### 5.6 Métricas hacia Zabbix
 
@@ -1329,6 +1405,7 @@ define VPN_SRV   = 10.10.50.2
 define WEB       = { 10.10.50.10, 10.10.50.11 }
 define VPN_ADMIN = 10.200.10.0/28
 define VPN_USERS = 10.200.20.0/27
+define VECINOS   = { 10.10.0.1, 10.10.0.6, 10.10.50.2 }
 
 table inet fw {
   chain input {
@@ -1338,6 +1415,8 @@ table inet fw {
     iifname "lo" accept
     ip saddr { $ADMIN, $VPN_ADMIN } tcp dport 22 log prefix "FW-ALLOW " accept
     ip saddr { $ADMIN, $VPN_ADMIN } icmp type echo-request accept
+    # Ping de los equipos conectados directamente, para comprobar los enlaces.
+    ip saddr $VECINOS icmp type echo-request accept
     log prefix "FW-DENY " drop
   }
 
@@ -1424,7 +1503,7 @@ Cada línea incluye fecha y hora, acción (`FW-ALLOW` o `FW-DENY`), IP de origen
 
 ### 7.4 IDS con Suricata
 
-En `/etc/suricata/suricata.yaml` ajusta estos bloques:
+En `/etc/suricata/suricata.yaml` cambia estos valores. El archivo ya trae los cuatro bloques: `HOME_NET` y `EXTERNAL_NET` están al inicio; en `af-packet` hay una entrada `- interface: eth0` que se sustituye por las tres interfaces de FW; y `default-rule-path` con `rule-files` están al final, apuntando a `/var/lib/suricata/rules` y `suricata.rules`.
 
 ```yaml
 vars:
@@ -1514,13 +1593,14 @@ Diferencias entre lo que cada encargado ha informado y lo que esta guía necesit
 2. **Puerto espejo:** crear `span0` (sección 3.1) antes de las pruebas del estudiante 5.
 3. **Zabbix:** restringir el frontend a la VLAN de Administración (sección 3.5).
 4. **Sin redirección web:** R2 no debe redirigir el puerto 80; lo hace PROXY.
+5. **DNS de los clientes:** el DHCP y PC-ADMIN01 deben usar `10.10.0.9` como servidor DNS (secciones 3.4 y 3.6).
 
 ### Estudiante 2 (PROXY)
 
 1. **Desvío en PROXY:** quitar la petición de que R2 redirija el puerto 80 hacia `10.10.0.9:3129`; la regla va en el propio PROXY (sección 4.3).
 2. **Alcance del desvío:** solo origen VLAN 10 y 20, y sin destinos internos (`10.10.0.0/16`).
 3. **Reenvío:** activar `ip_forward`.
-4. **HTTPS:** añadir el filtrado por SNI de la sección 4.4, o preparar dominios de prueba que funcionen por HTTP. Sin esto, dominios como facebook.com no se bloquean ni se registran.
+4. **HTTPS:** añadir el filtrado por SNI y la caché DNS de la sección 4.4, o preparar dominios de prueba que funcionen por HTTP. Sin el filtrado, dominios como facebook.com no se bloquean ni se registran; sin la caché, parte de las conexiones HTTPS permitidas falla.
 5. **IP de origen:** usar TPROXY (sección 4.2), o avisar a los estudiantes 3 y 5 de que el tráfico web saldrá con la IP `10.10.0.6`.
 
 ### Estudiante 3 (R-EDGE)
@@ -1528,11 +1608,12 @@ Diferencias entre lo que cada encargado ha informado y lo que esta guía necesit
 1. **Redes de los teléfonos:** confirmar que los dos entregan redes distintas y anotarlas (sección 1.3).
 2. **Enlace hacia el firewall:** R-EDGE es una VM, así que hay que unir una interfaz física del anfitrión a `br-edge-fw` y conectarla por cable a FW. Los teléfonos van en `br-isp1` y `br-isp2` (sección 1.3).
 3. **VPN:** reenviar UDP 51820 hacia `10.10.50.2` (ya incluido en `mwan-apply.sh`).
+4. **Cliente VPN de prueba:** alojar la VM PC-REMOTO en `br-isp1`, con un perfil de WireGuard del estudiante 4.
 
 ### Estudiante 4 (VPN y DMZ)
 
 1. **`AllowedIPs` de los clientes:** incluir `10.10.0.0/16`, y `0.0.0.0/0` en al menos un peer para Full Tunnel. Con el valor actual, el cliente no llega a ninguna VLAN.
-2. **Endpoint:** apuntar `vpn-multiwan` a la IP WAN de R-EDGE.
+2. **Endpoint:** apuntar `vpn-multiwan` a la IP WAN de R-EDGE, y entregar un perfil de cliente al estudiante 3 para PC-REMOTO.
 3. **Red de VPN-SRV:** conectarla a `br-dmz` con `10.10.50.2/28`, sin NAT.
 4. **WEB01 y ngrok:** montar el servidor web, sus rutas hacia las redes VPN y el túnel (secciones 6.2 y 6.3).
 5. **Pruebas:** añadir pruebas hacia las VLAN, no solo ping al servidor VPN.
