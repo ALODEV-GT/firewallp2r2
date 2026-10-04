@@ -7,6 +7,7 @@ Cadena principal: ISP1/ISP2 → R-EDGE → FW → PROXY → R2 → VLANs. La DMZ
 - **WAN:** los dos ISP son dos teléfonos celulares conectados por USB. Sus IPs son marcadores; dependen de la red que entregue cada teléfono, y las dos redes deben ser distintas (ver `configuraciones.md`, sección 1.3).
 - **DMZ y VPN en un mismo segmento:** WireGuard y los servidores web comparten `10.10.50.0/28` en una sola interfaz del firewall. Separarlos exigiría una cuarta interfaz en FW.
 - **DHCP en R2:** el servicio DHCP restringido corre en R2 y escucha solo en `eth1.20`. El diagrama del enunciado lo dibuja dentro de la VLAN de Usuarios; si se exige un equipo aparte, puede moverse a una VM en esa VLAN con los mismos archivos.
+- **Rangos VPN:** VPN-ADMIN usa `10.200.10.0/28` y VPN-USERS `10.200.20.0/27`, definidos por el encargado de la VPN. Son más pequeños que el ejemplo `/24` del enunciado; el firewall y las rutas deben usar estos mismos rangos.
 - **Puertos elegidos:** 51820 para WireGuard y 8080 para el portal de Squid.
 - **VPN-ADMIN hacia Zabbix:** el enunciado restringe el dashboard a la VLAN de Administración; quitar esa regla si se interpreta de forma estricta.
 
@@ -22,8 +23,8 @@ Cadena principal: ISP1/ISP2 → R-EDGE → FW → PROXY → R2 → VLANs. La DMZ
 | 10.10.30.0/28 | 255.255.255.240 | VLAN 30 – Zabbix |
 | 10.10.40.0/27 | 255.255.255.224 | VLAN 40 – Servidores |
 | 10.10.50.0/28 | 255.255.255.240 | DMZ (WEB01, WEB02, VPN-SRV) |
-| 10.200.10.0/24 | 255.255.255.0 | VPN-ADMIN |
-| 10.200.20.0/24 | 255.255.255.0 | VPN-USERS |
+| 10.200.10.0/28 | 255.255.255.240 | VPN-ADMIN |
+| 10.200.20.0/27 | 255.255.255.224 | VPN-USERS |
 
 ## Interfaces físicas
 
@@ -56,8 +57,8 @@ Cadena principal: ISP1/ISP2 → R-EDGE → FW → PROXY → R2 → VLANs. La DMZ
 | R2 | eth1.30 | 10.10.30.1 | 255.255.255.240 | — | 10.10.30.0/28 |
 | R2 | eth1.40 | 10.10.40.1 | 255.255.255.224 | — | 10.10.40.0/27 |
 | VPN-SRV | eth0 | 10.10.50.2 | 255.255.255.240 | 10.10.50.1 | 10.10.50.0/28 |
-| VPN-SRV | wg0 | 10.200.10.1 | 255.255.255.0 | — | 10.200.10.0/24 |
-| VPN-SRV | wg0 | 10.200.20.1 | 255.255.255.0 | — | 10.200.20.0/24 |
+| VPN-SRV | wg0 | 10.200.10.1 | 255.255.255.240 | — | 10.200.10.0/28 |
+| VPN-SRV | wg0 | 10.200.20.1 | 255.255.255.224 | — | 10.200.20.0/27 |
 | WEB01 | eth0 | 10.10.50.10 | 255.255.255.240 | 10.10.50.1 | 10.10.50.0/28 |
 | WEB02 (opcional) | eth0 | 10.10.50.11 | 255.255.255.240 | 10.10.50.1 | 10.10.50.0/28 |
 | PC-ADMIN01 | eth0 | 10.10.10.10 | 255.255.255.224 | 10.10.10.1 | 10.10.10.0/27 |
@@ -65,11 +66,10 @@ Cadena principal: ISP1/ISP2 → R-EDGE → FW → PROXY → R2 → VLANs. La DMZ
 | PC-USER02 (DHCP) | eth0 | 10.10.20.11 | 255.255.255.128 | 10.10.20.1 | 10.10.20.0/25 |
 | ZABBIX | eth0 | 10.10.30.2 | 255.255.255.240 | 10.10.30.1 | 10.10.30.0/28 |
 | SRV01 | eth0 | 10.10.40.10 | 255.255.255.224 | 10.10.40.1 | 10.10.40.0/27 |
-| Peer Admin 1 | wg0 | 10.200.10.10 | 255.255.255.0 | túnel | 10.200.10.0/24 |
-| Peer Admin 2 | wg0 | 10.200.10.11 | 255.255.255.0 | túnel | 10.200.10.0/24 |
-| Peer User 1 | wg0 | 10.200.20.10 | 255.255.255.0 | túnel | 10.200.20.0/24 |
-| Peer User 2 | wg0 | 10.200.20.11 | 255.255.255.0 | túnel | 10.200.20.0/24 |
-| Peer User 3 | wg0 | 10.200.20.12 | 255.255.255.0 | túnel | 10.200.20.0/24 |
+| local-admin1 | wg0 | 10.200.10.2 | 255.255.255.240 | túnel | 10.200.10.0/28 |
+| remote-admin1 a remote-admin6 | wg0 | 10.200.10.3 a 10.200.10.8 | 255.255.255.240 | túnel | 10.200.10.0/28 |
+| local-user1 | wg0 | 10.200.20.2 | 255.255.255.224 | túnel | 10.200.20.0/27 |
+| remote-user1 a remote-user8 | wg0 | 10.200.20.3 a 10.200.20.10 | 255.255.255.224 | túnel | 10.200.20.0/27 |
 
 \* Marcador: sustituir por la red real que entregue cada teléfono.
 
@@ -95,16 +95,16 @@ Solo rutas estáticas; las redes conectadas directamente no se listan.
 | R-EDGE | 0.0.0.0 | 0.0.0.0 | 192.168.41.1 * | eth0 |
 | R-EDGE | 0.0.0.0 | 0.0.0.0 | 192.168.42.1 * | eth1 |
 | R-EDGE | 10.10.0.0 | 255.255.0.0 | 10.10.0.2 | eth2 |
-| R-EDGE | 10.200.10.0 | 255.255.255.0 | 10.10.0.2 | eth2 |
-| R-EDGE | 10.200.20.0 | 255.255.255.0 | 10.10.0.2 | eth2 |
+| R-EDGE | 10.200.10.0 | 255.255.255.240 | 10.10.0.2 | eth2 |
+| R-EDGE | 10.200.20.0 | 255.255.255.224 | 10.10.0.2 | eth2 |
 | FW | 0.0.0.0 | 0.0.0.0 | 10.10.0.1 | eth0 |
 | FW | 10.10.0.8 | 255.255.255.252 | 10.10.0.6 | eth1 |
 | FW | 10.10.10.0 | 255.255.255.224 | 10.10.0.6 | eth1 |
 | FW | 10.10.20.0 | 255.255.255.128 | 10.10.0.6 | eth1 |
 | FW | 10.10.30.0 | 255.255.255.240 | 10.10.0.6 | eth1 |
 | FW | 10.10.40.0 | 255.255.255.224 | 10.10.0.6 | eth1 |
-| FW | 10.200.10.0 | 255.255.255.0 | 10.10.50.2 | eth2 |
-| FW | 10.200.20.0 | 255.255.255.0 | 10.10.50.2 | eth2 |
+| FW | 10.200.10.0 | 255.255.255.240 | 10.10.50.2 | eth2 |
+| FW | 10.200.20.0 | 255.255.255.224 | 10.10.50.2 | eth2 |
 | PROXY | 0.0.0.0 | 0.0.0.0 | 10.10.0.5 | eth0 |
 | PROXY | 10.10.10.0 | 255.255.255.224 | 10.10.0.10 | eth1 |
 | PROXY | 10.10.20.0 | 255.255.255.128 | 10.10.0.10 | eth1 |
@@ -113,8 +113,8 @@ Solo rutas estáticas; las redes conectadas directamente no se listan.
 | R2 | 0.0.0.0 | 0.0.0.0 | 10.10.0.9 | eth0 |
 | VPN-SRV | 0.0.0.0 | 0.0.0.0 | 10.10.50.1 | eth0 |
 | WEB01 / WEB02 | 0.0.0.0 | 0.0.0.0 | 10.10.50.1 | eth0 |
-| WEB01 / WEB02 | 10.200.10.0 | 255.255.255.0 | 10.10.50.2 | eth0 |
-| WEB01 / WEB02 | 10.200.20.0 | 255.255.255.0 | 10.10.50.2 | eth0 |
+| WEB01 / WEB02 | 10.200.10.0 | 255.255.255.240 | 10.10.50.2 | eth0 |
+| WEB01 / WEB02 | 10.200.20.0 | 255.255.255.224 | 10.10.50.2 | eth0 |
 | Hosts de VLAN | 0.0.0.0 | 0.0.0.0 | gateway de su VLAN (.1) | eth0 |
 
 Notas:

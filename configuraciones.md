@@ -826,8 +826,8 @@ auto eth2
 iface eth2 inet static
     address 10.10.0.1/30
     up ip route add 10.10.0.0/16   via 10.10.0.2
-    up ip route add 10.200.10.0/24 via 10.10.0.2
-    up ip route add 10.200.20.0/24 via 10.10.0.2
+    up ip route add 10.200.10.0/28 via 10.10.0.2
+    up ip route add 10.200.20.0/27 via 10.10.0.2
 ```
 
 Añade a `/etc/sysctl.d/99-router.conf`:
@@ -1068,7 +1068,7 @@ wg genkey | tee /etc/wireguard/server.key | wg pubkey > /etc/wireguard/server.pu
 ```ini
 [Interface]
 # Una interfaz con dos redes: VPN-ADMIN y VPN-USERS.
-Address = 10.200.10.1/24, 10.200.20.1/24
+Address = 10.200.10.1/28, 10.200.20.1/27
 ListenPort = 51820
 PrivateKey = <contenido de /etc/wireguard/server.key>
 ```
@@ -1080,13 +1080,14 @@ No hay reglas de NAT a propósito: el tráfico sale de VPN-SRV con su IP `10.200
 ```bash
 #!/bin/bash
 # Uso: wg-add-peer.sh <nombre> <admin|user> <ultimo_octeto> [full]
+# VPN-ADMIN: 10.200.10.0/28 (octetos 2 a 14). VPN-USERS: 10.200.20.0/27 (octetos 2 a 30).
 set -e
 ENDPOINT="<IP_WAN_DE_R-EDGE>:51820"   # IP de R-EDGE en la red del teléfono 1 (ver 1.5)
 nombre=$1; tipo=$2; octeto=$3; modo=${4:-split}
 
 case "$tipo" in
-  admin) red=10.200.10 ;;
-  user)  red=10.200.20 ;;
+  admin) red=10.200.10; prefijo=28 ;;
+  user)  red=10.200.20; prefijo=27 ;;
   *) echo "tipo debe ser admin o user" >&2; exit 1 ;;
 esac
 ip="$red.$octeto"
@@ -1109,7 +1110,7 @@ EOF
 cat > "/etc/wireguard/clients/$nombre.conf" <<EOF
 [Interface]
 PrivateKey = $priv
-Address = $ip/24
+Address = $ip/$prefijo
 DNS = 8.8.8.8
 
 [Peer]
@@ -1132,15 +1133,33 @@ echo "Peer $nombre creado: /etc/wireguard/clients/$nombre.conf"
 chmod +x /usr/local/sbin/wg-add-peer.sh
 systemctl enable --now wg-quick@wg0
 
-wg-add-peer.sh admin1 admin 10
-wg-add-peer.sh admin2 admin 11
-wg-add-peer.sh user1  user  10
-wg-add-peer.sh user2  user  11
-wg-add-peer.sh user3  user  12 full     # peer de demostración de Full Tunnel
 wg show
 ```
 
-En el servidor, `AllowedIPs = <ip>/32` hace que cada peer solo pueda usar su propia dirección: un usuario no puede hacerse pasar por un administrador cambiando su IP. El archivo de `clients/` se copia al equipo remoto y se activa con `wg-quick up ./admin1.conf` o importándolo en la aplicación de WireGuard.
+Peers definidos por el encargado de la VPN (ya creados, con sus claves):
+
+| Tipo | Peer | IP VPN |
+|---|---|---|
+| VPN-ADMIN (`10.200.10.0/28`) | local-admin1 | 10.200.10.2 |
+| VPN-ADMIN | remote-admin1 a remote-admin6 | 10.200.10.3 a 10.200.10.8 |
+| VPN-USERS (`10.200.20.0/27`) | local-user1 | 10.200.20.2 |
+| VPN-USERS | remote-user1 a remote-user8 | 10.200.20.3 a 10.200.20.10 |
+
+El script solo hace falta para peers nuevos, porque genera claves nuevas; no lo ejecutes sobre un peer que ya existe:
+
+```bash
+wg-add-peer.sh remote-admin7 admin 9
+wg-add-peer.sh remote-user9  user  11 full     # peer de demostración de Full Tunnel
+```
+
+En los perfiles de cliente ya creados, `AllowedIPs` debe incluir las redes internas y no solo la red VPN; si no, el cliente levanta el túnel pero no llega a ninguna VLAN:
+
+```ini
+AllowedIPs = 10.10.0.0/16        # split tunnel: redes internas del proyecto
+# AllowedIPs = 0.0.0.0/0         # full tunnel: todo el tráfico por la VPN
+```
+
+En el servidor, `AllowedIPs = <ip>/32` hace que cada peer solo pueda usar su propia dirección: un usuario no puede hacerse pasar por un administrador cambiando su IP. El archivo de `clients/` se copia al equipo remoto y se activa con `wg-quick up ./remote-admin1.conf` o importándolo en la aplicación de WireGuard.
 
 Con Full Tunnel, la navegación del peer sale por VPN-SRV → FW → R-EDGE, así que también pasa por el balanceo y el failover del Multi-WAN.
 
@@ -1154,8 +1173,8 @@ iface eth0 inet static
     address 10.10.50.10/28
     gateway 10.10.50.1
     # Las respuestas a clientes VPN vuelven por VPN-SRV, no por el firewall.
-    up ip route add 10.200.10.0/24 via 10.10.50.2
-    up ip route add 10.200.20.0/24 via 10.10.50.2
+    up ip route add 10.200.10.0/28 via 10.10.50.2
+    up ip route add 10.200.20.0/27 via 10.10.50.2
 ```
 
 Las dos rutas son necesarias porque VPN-SRV y WEB01 comparten segmento: un cliente VPN llega a WEB01 directamente, y sin ellas la respuesta iría al firewall, que la descartaría por no haber visto el inicio de la conexión.
@@ -1189,11 +1208,11 @@ ngrok abre una conexión **saliente** por TCP 443 desde WEB01 hacia su nube y de
 | Prueba | Comando | Resultado esperado |
 |---|---|---|
 | Túnel activo | `wg show` en VPN-SRV | Peer con `latest handshake` reciente |
-| Admin a VLAN ADMIN | Peer admin1: `ping 10.10.10.10` | Responde |
-| User a VLAN ADMIN | Peer user1: `ping 10.10.10.10` | Bloqueado (`FW-DENY` en FW) |
-| User a SERVERS | Peer user1: `curl http://10.10.40.10` | Responde |
+| Admin a VLAN ADMIN | Peer remote-admin1: `ping 10.10.10.10` | Responde |
+| User a VLAN ADMIN | Peer remote-user1: `ping 10.10.10.10` | Bloqueado (`FW-DENY` en FW) |
+| User a SERVERS | Peer remote-user1: `curl http://10.10.40.10` | Responde |
 | Registro de peers | `cat /etc/wireguard/peers.csv` | Nombre, tipo, IP, clave pública |
-| Full Tunnel | Peer user3: `curl ifconfig.me` | Muestra la IP pública de un ISP del proyecto |
+| Full Tunnel | Peer con `AllowedIPs = 0.0.0.0/0`: `curl ifconfig.me` | Muestra la IP pública de un ISP del proyecto |
 | Web en DMZ | PC-ADMIN01: `curl http://10.10.50.10` | Página de WEB01 |
 | ngrok | Abrir la URL pública desde un teléfono con datos | Página de WEB01 |
 | Sin IP pública | `ip -4 addr` en WEB01 | Solo 10.10.50.10 |
@@ -1222,8 +1241,8 @@ iface eth1 inet static
 auto eth2
 iface eth2 inet static
     address 10.10.50.1/28
-    up ip route add 10.200.10.0/24 via 10.10.50.2
-    up ip route add 10.200.20.0/24 via 10.10.50.2
+    up ip route add 10.200.10.0/28 via 10.10.50.2
+    up ip route add 10.200.20.0/27 via 10.10.50.2
 ```
 
 ### 7.2 Firewall nftables
@@ -1247,8 +1266,8 @@ define REDGE     = 10.10.0.1
 define DMZ_NET   = 10.10.50.0/28
 define VPN_SRV   = 10.10.50.2
 define WEB       = { 10.10.50.10, 10.10.50.11 }
-define VPN_ADMIN = 10.200.10.0/24
-define VPN_USERS = 10.200.20.0/24
+define VPN_ADMIN = 10.200.10.0/28
+define VPN_USERS = 10.200.20.0/27
 
 table inet fw {
   chain input {
@@ -1405,7 +1424,7 @@ Captura sugerida para la entrega: el saludo de WireGuard (UDP 51820) en `eth0` d
 |---|---|---|
 | A: navegación | PC-USER01 abre un sitio permitido y uno bloqueado | ACL de R2, Squid, firewall, Multi-WAN |
 | A: failover | Repetir con ISP1 caído (`br-isp1` abajo en el anfitrión) | Failover y recuperación |
-| B: VPN | Peer admin1 y peer user1 acceden a las VLAN | WireGuard, DNAT de R-EDGE, políticas de FW |
+| B: VPN | Peers remote-admin1 y remote-user1 acceden a las VLAN | WireGuard, DNAT de R-EDGE, políticas de FW |
 | C: ngrok | Un usuario externo abre la URL pública | DMZ, salida controlada por FW y Multi-WAN |
 | Monitoreo | Dashboard de Zabbix durante las pruebas | Métricas de ISP1 e ISP2 |
 
