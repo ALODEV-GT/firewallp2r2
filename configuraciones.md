@@ -1,6 +1,6 @@
 # XelajuNetwork: guía de configuración por componente
 
-Esta guía aplica el plan de `direccionamiento.md`. Todas las direcciones, rutas y reglas salen de ese archivo; si cambian allí, hay que cambiarlas aquí.
+Esta guía aplica el plan de `direccionamiento.md`. Todas las direcciones, rutas y reglas salen de ese archivo; si cambian allí, hay que cambiarlas aquí. Las pruebas de cada fase se registran en `bitacora-pruebas.md`.
 
 > **Estado:** estas configuraciones no se han ejecutado todavía en los equipos reales. Sí se validaron en un contenedor Debian 13 con las herramientas reales:
 >
@@ -967,9 +967,11 @@ INTERVALO=5
 10.10.20.11, [443], TCP, ISP1
 10.10.10.0/27, [443], TCP, ISP1
 10.10.40.0/27, [443], TCP, ISP2
-10.10.10.10, [22], TCP, ISP2
+10.10.10.10, [80], TCP, ISP2
 10.10.0.6, [53], UDP, ISP2
 ```
+
+La línea de `10.10.10.10` con el puerto 80 muestra dos tipos de tráfico de un mismo equipo por proveedores distintos: su HTTP sale por ISP2 y su HTTPS, por ISP1 (regla de la VLAN de Administración).
 
 Las consultas DNS de las VLAN 10 y 20 llegan a Internet con la IP de PROXY (`10.10.0.6`), porque las resuelve su caché; la última línea las envía por ISP2. La línea de `10.10.20.10` con el puerto 53 solo aplica si ese equipo consulta directamente a un servidor externo (por ejemplo, `dig @8.8.8.8`).
 
