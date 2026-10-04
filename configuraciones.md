@@ -159,6 +159,41 @@ La MAC de cada interfaz sale del `id`: PC-USER01 tiene `52:54:00:00:0c:00` y PC-
 - **Sin IP pública (cliente VPN):** las redes móviles casi siempre usan CGNAT, así que un cliente no podrá iniciar la VPN desde Internet. Como el enlace USB solo une el teléfono con R-EDGE, el cliente "remoto" debe conectarse al lado WAN: usa la VM PC-REMOTO en `br-isp1` (sección 1.4), dale una IP de la red del teléfono 1 y usa como `Endpoint` la IP WAN de R-EDGE en esa red. Un equipo real fuera del laboratorio solo sirve si algún teléfono tiene IP pública.
 - **Wireshark:** se ejecuta en el anfitrión de SW1 capturando en `span0`, el puerto espejo del switch (sección 3.1).
 
+### 1.6 Reparto real por equipos y cableado
+
+Cada integrante monta su componente en su propio equipo. La tabla recoge lo que cada uno ha informado; lo marcado "por confirmar" todavía no se ha comunicado.
+
+| Encargado | Equipo real | Nodos que aloja |
+|---|---|---|
+| Estudiante 1 | Anfitrión Ubuntu con QEMU/KVM y Open vSwitch | R2, SW1, PC-ADMIN01, PC-USER01, PC-USER02, ZABBIX, SRV01 |
+| Estudiante 2 | Equipo físico con Debian y NetworkManager | PROXY |
+| Estudiante 3 | Por confirmar (VM o equipo físico), con dos teléfonos por USB | R-EDGE |
+| Estudiante 4 | Anfitrión con VM QEMU/KVM gestionadas con libvirt | VPN-SRV, WEB01, clientes VPN de prueba |
+| Estudiante 5 | Por confirmar (VM o equipo físico) | FW |
+
+Los segmentos que unen componentes de dos equipos son cables Ethernet:
+
+| Enlace | Red | Un extremo | Otro extremo |
+|---|---|---|---|
+| R-EDGE – FW | 10.10.0.0/30 | R-EDGE `eth2` | FW `eth0` |
+| FW – PROXY | 10.10.0.4/30 | FW `eth1` | PROXY `enp0s31f6` |
+| PROXY – R2 | 10.10.0.8/30 | PROXY `enx9c69d3101d16` | Interfaz física del anfitrión del estudiante 1, unida a `br-proxy-r2` |
+| FW – DMZ | 10.10.50.0/28 | FW `eth2` | Interfaz física del anfitrión del estudiante 4, unida a `br-dmz` |
+
+Interfaces Ethernet físicas que necesita cada equipo (con adaptadores USB-Ethernet si faltan):
+
+| Equipo | Interfaces | Para |
+|---|---|---|
+| R-EDGE | 1, más los dos teléfonos por USB | FW |
+| FW | 3 | R-EDGE, PROXY, DMZ |
+| PROXY | 2 | FW, R2 |
+| Anfitrión del estudiante 1 | 1 | PROXY |
+| Anfitrión del estudiante 4 | 1 | FW |
+
+Cuando el nodo es una VM, la interfaz física del anfitrión se une al bridge del segmento y la VM se conecta a ese bridge. Cuando el nodo es un equipo físico, la interfaz física es directamente la del nodo y no hace falta bridge.
+
+En toda la guía, los nombres `eth0`, `eth1`, … son los de una VM. En un equipo físico hay que sustituirlos por los nombres reales, tanto en la configuración de red como en las reglas de nftables.
+
 ## 2. Preparación común y orden de montaje
 
 ### 2.1 Paquetes
@@ -510,12 +545,25 @@ Esta restricción se suma a la ACL de R2, que ya impide que USERS llegue a la VL
 
 ### 4.1 Cómo funciona
 
-PROXY está en línea entre R2 y FW, así que todo el tráfico de las VLAN lo atraviesa. Con TPROXY, el kernel desvía a Squid las conexiones web de ADMIN y USERS sin que el cliente configure nada, y Squid sale a Internet **conservando la IP del cliente como origen**. Eso último es lo que permite que el firewall y el Multi-WAN sigan aplicando reglas por IP de origen.
+PROXY está en línea entre R2 y FW, así que todo el tráfico de las VLAN lo atraviesa. Por eso el desvío hacia Squid se hace en el propio PROXY: R2 no redirige nada, y no debe hacerlo, porque Squid necesita que el desvío ocurra en su misma máquina para conocer el destino original de cada conexión. Con TPROXY, el kernel desvía a Squid las conexiones web de ADMIN y USERS sin que el cliente configure nada, y Squid sale a Internet **conservando la IP del cliente como origen**. Eso último es lo que permite que el firewall y el Multi-WAN sigan aplicando reglas por IP de origen.
 
 - **HTTP (puerto 80):** Squid lee la cabecera `Host` y aplica la lista.
 - **HTTPS (puerto 443):** Squid no descifra. Lee el nombre del sitio en el SNI del saludo TLS (`peek`); si está en la lista corta la conexión (`terminate`), y si no la deja pasar intacta (`splice`).
 
 ### 4.2 Red y enrutamiento de PROXY
+
+> **Equipo real del encargado.** PROXY es un equipo físico con NetworkManager, y sus interfaces no se llaman `eth0` y `eth1`:
+>
+> | En esta guía | Interfaz real | Perfil de NetworkManager | Hacia |
+> |---|---|---|---|
+> | `eth0` | `enp0s31f6` | `squid-firewall` | FW |
+> | `eth1` | `enx9c69d3101d16` | `squid-r2` | R2 |
+>
+> Las direcciones, el gateway y las rutas a las VLAN ya están en esos perfiles. Faltan tres cosas, que NetworkManager no toma de `/etc/network/interfaces`:
+>
+> - **Reenvío:** `net.ipv4.ip_forward = 1` (sección 2.2), porque PROXY también enruta el tráfico que no es web.
+> - **Reglas de TPROXY:** los dos comandos `ip rule` e `ip route … table 100` de abajo van en un script de arranque, con el patrón de unidad de la sección 3.1.
+> - **Nombres reales:** en `nftables.conf` y en los `rp_filter`, sustituir `eth0` y `eth1` por los nombres reales.
 
 `/etc/network/interfaces`:
 
@@ -1040,6 +1088,12 @@ El failover se provoca cortando el enlace fuera de R-EDGE: bajando el bridge en 
 
 ### 6.1 VPN-SRV: servidor WireGuard
 
+> **Equipo real del encargado.** VPN-SRV es la VM `debian-wireguard`, gestionada con libvirt, y ya tiene `wg0` con sus claves y peers creados a mano. Para integrarla:
+>
+> - **Red de la VM:** su interfaz debe conectarse al bridge `br-dmz` del anfitrión, no a la red NAT por defecto de libvirt, y usar `10.10.50.2/28` con gateway `10.10.50.1`.
+> - **Nombres de archivo:** sus claves están en `wg0-private.key` y `wg0-public.key`; esta guía las llama `server.key` y `server.pub`. Sirve cualquiera de los dos nombres mientras el script de peers use el mismo.
+> - **Endpoint de los clientes:** usan el alias `vpn-multiwan` en `/etc/hosts`, que hoy apunta a la red de libvirt. En la integración debe apuntar a la IP WAN de R-EDGE.
+
 `/etc/network/interfaces`:
 
 ```
@@ -1436,3 +1490,42 @@ Captura sugerida para la entrega: el saludo de WireGuard (UDP 51820) en `eth0` d
 | VPN sin handshake | DNAT en R-EDGE, regla UDP 51820 en FW, `Endpoint` del cliente |
 | VPN conecta pero no llega a las VLAN | Rutas a `10.200.x.x` en FW y `ip_forward` en VPN-SRV |
 | Algo bloqueado sin saber dónde | `fw.log` en FW y `journalctl -k \| grep ACL-DENY` en R2 |
+
+## 10. Pendientes de integración por encargado
+
+Diferencias entre lo que cada encargado ha informado y lo que esta guía necesita para que los componentes funcionen juntos.
+
+### Estudiante 1 (R2, SW1, Zabbix)
+
+1. **Enlace hacia el proxy:** unir una interfaz física del anfitrión a `br-proxy-r2` y conectarla por cable a PROXY.
+2. **Puerto espejo:** crear `span0` (sección 3.1) antes de las pruebas del estudiante 5.
+3. **Zabbix:** restringir el frontend a la VLAN de Administración (sección 3.5).
+4. **Sin redirección web:** R2 no debe redirigir el puerto 80; lo hace PROXY.
+
+### Estudiante 2 (PROXY)
+
+1. **Desvío en PROXY:** quitar la petición de que R2 redirija el puerto 80 hacia `10.10.0.9:3129`; la regla va en el propio PROXY (sección 4.3).
+2. **Alcance del desvío:** solo origen VLAN 10 y 20, y sin destinos internos (`10.10.0.0/16`).
+3. **Reenvío:** activar `ip_forward`.
+4. **HTTPS:** añadir el filtrado por SNI de la sección 4.4, o preparar dominios de prueba que funcionen por HTTP. Sin esto, dominios como facebook.com no se bloquean ni se registran.
+5. **IP de origen:** usar TPROXY (sección 4.2), o avisar a los estudiantes 3 y 5 de que el tráfico web saldrá con la IP `10.10.0.6`.
+
+### Estudiante 3 (R-EDGE)
+
+1. **Redes de los teléfonos:** confirmar que los dos entregan redes distintas y anotarlas (sección 1.3).
+2. **Equipo:** informar si R-EDGE es una VM o un equipo físico.
+3. **VPN:** reenviar UDP 51820 hacia `10.10.50.2` (ya incluido en `mwan-apply.sh`).
+
+### Estudiante 4 (VPN y DMZ)
+
+1. **`AllowedIPs` de los clientes:** incluir `10.10.0.0/16`, y `0.0.0.0/0` en al menos un peer para Full Tunnel. Con el valor actual, el cliente no llega a ninguna VLAN.
+2. **Endpoint:** apuntar `vpn-multiwan` a la IP WAN de R-EDGE.
+3. **Red de VPN-SRV:** conectarla a `br-dmz` con `10.10.50.2/28`, sin NAT.
+4. **WEB01 y ngrok:** montar el servidor web, sus rutas hacia las redes VPN y el túnel (secciones 6.2 y 6.3).
+5. **Pruebas:** añadir pruebas hacia las VLAN, no solo ping al servidor VPN.
+
+### Estudiante 5 (FW)
+
+1. **Equipo:** informar si FW es una VM o un equipo físico; necesita tres interfaces.
+2. **Tráfico web del proxy:** si el estudiante 2 no usa TPROXY, añadir una regla que permita TCP 80 desde `10.10.0.6` hacia Internet.
+3. **Puerto espejo:** coordinar con el estudiante 1 la captura en `span0`.
