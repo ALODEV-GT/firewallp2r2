@@ -6,6 +6,7 @@ Cadena principal: ISP1/ISP2 → R-EDGE → FW → PROXY → R2 → VLANs. La DMZ
 
 - **WAN:** los dos ISP son dos teléfonos celulares conectados por USB. Sus IPs son marcadores; dependen de la red que entregue cada teléfono, y las dos redes deben ser distintas (ver `configuraciones.md`, sección 1.3).
 - **DMZ y VPN en un mismo segmento:** WireGuard y los servidores web comparten `10.10.50.0/28` en una sola interfaz del firewall. Separarlos exigiría una cuarta interfaz en FW.
+- **SW1 en Ubuntu:** SW1 es un Open vSwitch en el anfitrión del estudiante 1, que usa Ubuntu. El catedrático autorizó Ubuntu para este equipo.
 - **DHCP en R2:** el servicio DHCP restringido corre en R2 y escucha solo en `eth1.20`. El diagrama del enunciado lo dibuja dentro de la VLAN de Usuarios; si se exige un equipo aparte, puede moverse a una VM en esa VLAN con los mismos archivos.
 - **Rangos VPN:** VPN-ADMIN usa `10.200.10.0/28` y VPN-USERS `10.200.20.0/27`, definidos por el encargado de la VPN. Son más pequeños que el ejemplo `/24` del enunciado; el firewall y las rutas deben usar estos mismos rangos.
 - **Puertos elegidos:** 51820 para WireGuard y 8080 para el portal de Squid.
@@ -34,7 +35,7 @@ Cadena principal: ISP1/ISP2 → R-EDGE → FW → PROXY → R2 → VLANs. La DMZ
 | FW | 3 | hacia R-EDGE, hacia PROXY, DMZ |
 | PROXY | 2 | hacia FW, hacia R2 |
 | R2 | 2 | hacia PROXY, troncal 802.1Q (4 subinterfaces) |
-| SW1 | 8 | troncal hacia R2, 6 puertos de acceso, 1 puerto espejo (SPAN) |
+| SW1 (Open vSwitch) | 6 puertos + espejo | troncal hacia R2, 5 puertos de acceso, 1 puerto espejo (SPAN) |
 | VPN-SRV | 1 | DMZ (más `wg0`, virtual) |
 | WEB01 / WEB02 | 1 | DMZ |
 | Zabbix, SRV01, PCs | 1 | su VLAN |
@@ -73,18 +74,17 @@ Cadena principal: ISP1/ISP2 → R-EDGE → FW → PROXY → R2 → VLANs. La DMZ
 
 \* Marcador: sustituir por la red real que entregue cada teléfono.
 
-SW1 es de capa 2 y no lleva IP. Sus puertos:
+SW1 es de capa 2 y no lleva IP. Es un Open vSwitch en el anfitrión del estudiante 1; sus puertos son interfaces tap a las que se conectan las VM:
 
 | Puerto | Modo | VLAN | Conectado a |
 |---|---|---|---|
-| eth0 | Troncal 802.1Q | 10, 20, 30, 40 | R2 eth1 |
-| eth1 | Acceso | 10 | PC-ADMIN01 |
-| eth2 | Acceso | 20 | Libre: cliente no registrado (prueba de DHCP) |
-| eth3 | Acceso | 20 | PC-USER01 |
-| eth4 | Acceso | 20 | PC-USER02 |
-| eth5 | Acceso | 30 | ZABBIX |
-| eth6 | Acceso | 40 | SRV01 |
-| eth7 | Espejo (SPAN) | — | Captura con Wireshark |
+| tap-r2 | Troncal 802.1Q | 10, 20, 30, 40 | R2 eth1 |
+| tap-admin01 | Acceso | 10 | PC-ADMIN01 |
+| tap-user01 | Acceso | 20 | PC-USER01 |
+| tap-user02 | Acceso | 20 | PC-USER02 |
+| tap-zabbix | Acceso | 30 | ZABBIX |
+| tap-srv01 | Acceso | 40 | SRV01 |
+| span0 | Espejo (SPAN) | — | Captura con Wireshark |
 
 ## Tabla de rutas
 

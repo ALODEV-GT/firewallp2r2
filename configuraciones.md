@@ -8,7 +8,7 @@ Esta guía aplica el plan de `direccionamiento.md`. Todas las direcciones, rutas
 
 ## 1. Entorno de ejecución
 
-No se usa GNS3. Cada nodo es una máquina virtual QEMU/KVM con Debian 13, o un equipo físico con Debian instalado en modo texto como sistema principal. Las VM se conectan entre sí con bridges Linux creados en el equipo anfitrión: cada segmento de red de la topología es un bridge, y cada interfaz de una VM es una interfaz virtual (tap) conectada a su bridge.
+No se usa GNS3. Cada nodo es una máquina virtual QEMU/KVM con Debian 13, o un equipo físico con Debian instalado en modo texto como sistema principal. Las VM se conectan entre sí con bridges Linux creados en el equipo anfitrión: cada segmento de red de la topología es un bridge, y cada interfaz de una VM es una interfaz virtual (tap) conectada a su bridge. La LAN interna es la excepción: su switch (SW1) es un Open vSwitch en el anfitrión del estudiante 1, que usa Ubuntu con autorización del catedrático.
 
 ### 1.1 Nodos
 
@@ -18,14 +18,14 @@ No se usa GNS3. Cada nodo es una máquina virtual QEMU/KVM con Debian 13, o un e
 | FW | VM QEMU Debian 13, o Debian físico | Texto | 3 | 1 GB (Suricata) |
 | PROXY | VM QEMU Debian 13, o Debian físico | Texto | 2 | 1 GB |
 | R2 | VM QEMU Debian 13, o Debian físico | Texto | 2 | 512 MB |
-| SW1 | VM QEMU Debian 13 (bridge Linux con VLAN) | Texto | 8 | 256 MB |
+| SW1 | Open vSwitch en el anfitrión Ubuntu del estudiante 1 (no es una VM) | Consola | 6 puertos + espejo | — |
 | ZABBIX | VM QEMU Debian 13 | Texto (su interfaz web se usa desde un cliente) | 1 | 2 GB |
 | VPN-SRV | VM QEMU Debian 13 | Texto | 1 | 256 MB |
 | WEB01 / WEB02 | VM QEMU Debian 13 | Texto | 1 | 256 MB |
 | SRV01 | VM QEMU Debian 13 | Texto | 1 | 256 MB |
-| PC-ADMIN01, PC-USER01/02 | VM QEMU Debian con escritorio | Gráfico (permitido para clientes) | 1 | 2 GB |
+| PC-ADMIN01, PC-USER01 | VM QEMU Debian 13 con escritorio XFCE | Gráfico (permitido para clientes) | 1 | 2 GB |
+| PC-USER02 | VM QEMU Debian 13 | Texto | 1 | 512 MB |
 | PC-REMOTO (cliente VPN) | VM QEMU Debian con escritorio conectada a `br-isp1` (ver 1.5) | Gráfico | 1 | 2 GB |
-| PC-INVITADO (prueba de rechazo DHCP) | VM QEMU Debian con escritorio conectada a `br-p2` | Gráfico | 1 | 2 GB |
 | Anfitrión | Equipo Linux que ejecuta QEMU y los bridges | — | — | — |
 
 ### 1.2 Bridges del anfitrión
@@ -38,16 +38,8 @@ No se usa GNS3. Cada nodo es una máquina virtual QEMU/KVM con Debian 13, o un e
 | br-fw-proxy | 10.10.0.4/30 | FW eth1, PROXY eth0 |
 | br-proxy-r2 | 10.10.0.8/30 | PROXY eth1, R2 eth0 |
 | br-dmz | 10.10.50.0/28 | FW eth2, VPN-SRV, WEB01, WEB02 |
-| br-trunk | Troncal 802.1Q | R2 eth1, SW1 eth0 |
-| br-p1 | Puerto 1 de SW1 (VLAN 10) | SW1 eth1, PC-ADMIN01 |
-| br-p2 | Puerto 2 de SW1 (VLAN 20) | SW1 eth2, libre: cliente no registrado para la prueba de DHCP |
-| br-p3 | Puerto 3 de SW1 (VLAN 20) | SW1 eth3, PC-USER01 |
-| br-p4 | Puerto 4 de SW1 (VLAN 20) | SW1 eth4, PC-USER02 |
-| br-p5 | Puerto 5 de SW1 (VLAN 30) | SW1 eth5, ZABBIX |
-| br-p6 | Puerto 6 de SW1 (VLAN 40) | SW1 eth6, SRV01 |
-| br-p7 | Puerto espejo de SW1 | SW1 eth7, captura con Wireshark |
 
-Cada bridge `br-pN` equivale a un cable entre un puerto de SW1 y un equipo. Las VLAN las aplica SW1; estos bridges solo transportan tramas.
+La LAN interna no usa bridges Linux: R2 y los equipos de las VLAN se conectan a puertos de SW1, el Open vSwitch del anfitrión del estudiante 1. Sus puertos están en la sección 3.1.
 
 ### 1.3 Red del anfitrión
 
@@ -69,8 +61,7 @@ set -e
 TEL1_IF=usb0           # teléfono 1 (ISP1)
 TEL2_IF=usb1           # teléfono 2 (ISP2)
 
-for br in br-isp1 br-isp2 br-edge-fw br-fw-proxy br-proxy-r2 br-dmz br-trunk \
-          br-p1 br-p2 br-p3 br-p4 br-p5 br-p6 br-p7; do
+for br in br-isp1 br-isp2 br-edge-fw br-fw-proxy br-proxy-r2 br-dmz; do
   ip link add "$br" type bridge 2>/dev/null || true
   ip link set "$br" up
 done
@@ -113,14 +104,20 @@ qemu-img create -f qcow2 -F qcow2 -b /ruta/a/debian13-base.qcow2 /var/lib/xelaju
 
 ```bash
 #!/bin/bash
-# Uso: vm.sh <nombre> <id> <ram_MB> <bridge>...
-# La primera interfaz de la VM (eth0) se conecta al primer bridge, y así sucesivamente.
+# Uso: vm.sh <nombre> <id> <ram_MB> <red>...
+# Cada <red> es un bridge Linux (br-dmz) o un puerto ya creado de SW1 (tap:tap-r2).
+# La primera interfaz de la VM (eth0) usa la primera <red>, y así sucesivamente.
 nombre=$1; id=$2; ram=$3; shift 3
 
 red=(); i=0
 for br in "$@"; do
   mac=$(printf '52:54:00:00:%02x:%02x' "$id" "$i")   # MAC única por VM e interfaz
-  red+=(-netdev "bridge,id=n$i,br=$br" -device "e1000,netdev=n$i,mac=$mac")
+  if [[ "$br" == tap:* ]]; then
+    conexion="tap,id=n$i,ifname=${br#tap:},script=no,downscript=no"
+  else
+    conexion="bridge,id=n$i,br=$br"
+  fi
+  red+=(-netdev "$conexion" -device "e1000,netdev=n$i,mac=$mac")
   i=$((i + 1))
 done
 
@@ -137,19 +134,17 @@ Arranque de cada nodo, como root y cada uno en su propia terminal (o en ventanas
 vm.sh R-EDGE    1  512  br-isp1 br-isp2 br-edge-fw
 vm.sh FW        2  1024 br-edge-fw br-fw-proxy br-dmz
 vm.sh PROXY     3  1024 br-fw-proxy br-proxy-r2
-vm.sh R2        4  512  br-proxy-r2 br-trunk
-vm.sh SW1       5  256  br-trunk br-p1 br-p2 br-p3 br-p4 br-p5 br-p6 br-p7
-vm.sh ZABBIX    7  2048 br-p5
-vm.sh SRV01     8  256  br-p6
+vm.sh R2        4  512  br-proxy-r2 tap:tap-r2
+vm.sh ZABBIX    7  2048 tap:tap-zabbix
+vm.sh SRV01     8  256  tap:tap-srv01
 vm.sh VPN-SRV   9  256  br-dmz
 vm.sh WEB01     10 256  br-dmz
-GUI=1 vm.sh PC-ADMIN01 11 2048 br-p1
-GUI=1 vm.sh PC-USER01  12 2048 br-p3
-GUI=1 vm.sh PC-USER02  13 2048 br-p4
+GUI=1 vm.sh PC-ADMIN01 11 2048 tap:tap-admin01
+GUI=1 vm.sh PC-USER01  12 2048 tap:tap-user01
+vm.sh PC-USER02        13 512  tap:tap-user02
 
-# Clientes de prueba: se arrancan solo cuando hacen falta.
+# Cliente de prueba: se arranca solo cuando hace falta.
 GUI=1 vm.sh PC-REMOTO   14 2048 br-isp1   # cliente VPN en el lado WAN
-GUI=1 vm.sh PC-INVITADO 15 2048 br-p2     # MAC no registrada en el DHCP
 ```
 
 La MAC de cada interfaz sale del `id`: PC-USER01 tiene `52:54:00:00:0c:00` y PC-USER02 `52:54:00:00:0d:00`. Son las que se registran en el DHCP restringido. Sin MAC explícita, todas las VM de QEMU arrancarían con la misma y la red fallaría.
@@ -157,12 +152,12 @@ La MAC de cada interfaz sale del `id`: PC-USER01 tiene `52:54:00:00:0c:00` y PC-
 ### 1.5 Notas del entorno
 
 - **Nombres de interfaz:** la guía usa `eth0`, `eth1`, … Si Debian las nombra `ens3` o `enp0s3`, añade `net.ifnames=0 biosdevname=0` a `GRUB_CMDLINE_LINUX` en `/etc/default/grub`, ejecuta `update-grub` y reinicia; o sustituye los nombres en cada archivo.
-- **SW1 como VM Debian:** el enunciado pide configurar los switches por consola, y un bridge Linux con filtrado de VLAN lo permite.
-- **Varios equipos físicos:** si un segmento une VMs de dos anfitriones, añade la interfaz Ethernet física al bridge de ese segmento en ambos (`ip link set <interfaz> master br-fw-proxy`) y conéctalos por cable.
+- **SW1 como Open vSwitch:** el enunciado pide configurar los switches por consola, y Open vSwitch se administra con `ovs-vsctl`. Corre en el anfitrión del estudiante 1, que usa Ubuntu; el catedrático autorizó Ubuntu para este equipo.
+- **Varios equipos físicos:** cada integrante trabaja en su propio equipo, así que los segmentos que unen dos componentes cruzan de una máquina a otra por cable. En cada extremo, la interfaz Ethernet física se une al bridge de ese segmento (`ip link set <interfaz> master br-proxy-r2`), o es directamente la interfaz del nodo si este es un equipo físico. Por ejemplo, `eth0` de R2 sale por `br-proxy-r2` en el anfitrión del estudiante 1 y llega por cable al PROXY, que es un equipo físico. `lab-net.sh` crea todos los bridges; cada anfitrión solo necesita los de sus propios nodos.
 - **Debian como sistema principal:** si un nodo es un equipo físico, necesita tantas interfaces de red como indica la tabla (adaptadores USB-Ethernet si faltan). Si ese nodo es R-EDGE, los dos teléfonos se conectan a él y son directamente sus interfaces WAN; no hacen falta `br-isp1` ni `br-isp2`, y sus nombres reales (`usb0`, `usb1`, …) van en `mwan.conf` y en `/etc/network/interfaces`.
 - **Consumo de datos:** todo el tráfico del laboratorio sale por datos móviles. Instala los paquetes antes (sección 2.1) y evita descargas grandes durante las pruebas.
 - **Sin IP pública (cliente VPN):** las redes móviles casi siempre usan CGNAT, así que un cliente no podrá iniciar la VPN desde Internet. Como el enlace USB solo une el teléfono con R-EDGE, el cliente "remoto" debe conectarse al lado WAN: usa la VM PC-REMOTO en `br-isp1` (sección 1.4), dale una IP de la red del teléfono 1 y usa como `Endpoint` la IP WAN de R-EDGE en esa red. Un equipo real fuera del laboratorio solo sirve si algún teléfono tiene IP pública.
-- **Wireshark:** puede ejecutarse en el anfitrión capturando en `br-p7`, o en una VM cliente conectada a ese bridge.
+- **Wireshark:** se ejecuta en el anfitrión de SW1 capturando en `span0`, el puerto espejo del switch (sección 3.1).
 
 ## 2. Preparación común y orden de montaje
 
@@ -177,7 +172,7 @@ Los nodos no tendrán Internet hasta que toda la cadena funcione. Instala los pa
 | FW | `rsyslog suricata` |
 | PROXY | `squid-openssl openssl python3` |
 | R2 | `vlan isc-dhcp-server` |
-| SW1 | `iproute2` (ya incluido) |
+| Anfitrión de SW1 (Ubuntu) | `openvswitch-switch` |
 | ZABBIX | `zabbix-server-mysql zabbix-frontend-php zabbix-agent mariadb-server apache2 libapache2-mod-php php-mysql` |
 | VPN-SRV | `wireguard` |
 | WEB01 / WEB02 | `nginx` y `ngrok` (ver 6.3) |
@@ -217,74 +212,73 @@ Monta y prueba en este orden; cada paso depende del anterior:
 
 ### 3.1 SW1: VLANs, troncal y puertos de acceso
 
+SW1 es un Open vSwitch que corre en el anfitrión Ubuntu del estudiante 1; no es una VM. Se configura por consola con `ovs-vsctl`, y cada VM se conecta a uno de sus puertos mediante una interfaz tap.
+
 Asignación de puertos:
 
 | Puerto | Modo | VLAN | Conectado a |
 |---|---|---|---|
-| eth0 | Troncal 802.1Q | 10, 20, 30, 40 | R2 eth1 |
-| eth1 | Acceso | 10 | PC-ADMIN01 |
-| eth2 | Acceso | 20 | Libre: cliente no registrado (prueba de DHCP) |
-| eth3 | Acceso | 20 | PC-USER01 |
-| eth4 | Acceso | 20 | PC-USER02 |
-| eth5 | Acceso | 30 | ZABBIX |
-| eth6 | Acceso | 40 | SRV01 |
-| eth7 | Espejo (SPAN) | — | Equipo con Wireshark |
+| tap-r2 | Troncal 802.1Q | 10, 20, 30, 40 | R2 eth1 |
+| tap-admin01 | Acceso | 10 | PC-ADMIN01 |
+| tap-user01 | Acceso | 20 | PC-USER01 |
+| tap-user02 | Acceso | 20 | PC-USER02 |
+| tap-zabbix | Acceso | 30 | ZABBIX |
+| tap-srv01 | Acceso | 40 | SRV01 |
+| span0 | Espejo (SPAN) | — | Captura con Wireshark en el anfitrión |
 
-`/usr/local/sbin/sw1-vlans.sh`:
+`/usr/local/sbin/sw1-ovs.sh` en el anfitrión:
 
 ```bash
 #!/bin/bash
-# Bridge con filtrado de VLAN: se comporta como un switch 802.1Q.
+# SW1: Open vSwitch en el anfitrión. Crea el switch, sus puertos y el espejo.
 set -e
-ip link add br0 type bridge vlan_filtering 1
-ip link set br0 up
+ovs-vsctl --may-exist add-br sw1
 
-for i in eth0 eth1 eth2 eth3 eth4 eth5 eth6; do
-  ip link set "$i" master br0
-  ip link set "$i" up
-  bridge vlan del dev "$i" vid 1        # quita la VLAN 1 por defecto
-done
+puerto() {   # $1 nombre del tap, $2 opción de VLAN (tag=N o trunks=...)
+  ip tuntap add dev "$1" mode tap 2>/dev/null || true
+  ip link set "$1" up
+  ovs-vsctl --may-exist add-port sw1 "$1" -- set port "$1" "$2"
+}
 
-# Troncal: transporta las cuatro VLAN etiquetadas.
-for v in 10 20 30 40; do bridge vlan add dev eth0 vid "$v"; done
+# Troncal: transporta las cuatro VLAN etiquetadas hacia R2.
+puerto tap-r2 trunks=10,20,30,40
 
-# Acceso: la trama entra sin etiqueta y se asigna a la VLAN (pvid).
-acceso() { bridge vlan add dev "$1" vid "$2" pvid untagged; }
-acceso eth1 10
-acceso eth2 20
-acceso eth3 20
-acceso eth4 20
-acceso eth5 30
-acceso eth6 40
+# Acceso: la trama entra sin etiqueta y se asigna a la VLAN (tag).
+puerto tap-admin01 tag=10
+puerto tap-user01  tag=20
+puerto tap-user02  tag=20
+puerto tap-zabbix  tag=30
+puerto tap-srv01   tag=40
 
-# SPAN: copia a eth7 todo lo que entra y sale por la troncal.
-ip link set eth7 up
-tc qdisc add dev eth0 clsact
-tc filter add dev eth0 ingress matchall action mirred egress mirror dev eth7
-tc filter add dev eth0 egress  matchall action mirred egress mirror dev eth7
+# SPAN: puerto interno que recibe una copia de todo el tráfico del switch.
+ovs-vsctl --may-exist add-port sw1 span0 -- set interface span0 type=internal
+ip link set span0 up
+ovs-vsctl -- --id=@p get port span0 \
+          -- --id=@m create mirror name=span select-all=true output-port=@p \
+          -- set bridge sw1 mirrors=@m
 ```
 
-Para que se ejecute al arrancar, crea `/etc/systemd/system/sw1-vlans.service`. Este mismo patrón de unidad sirve para los demás scripts de la guía:
+El script debe ejecutarse antes de arrancar las VM, porque `vm.sh` se conecta a los tap que este crea. Para que se ejecute al arrancar, crea `/etc/systemd/system/sw1-ovs.service`. Este mismo patrón de unidad sirve para los demás scripts de la guía:
 
 ```ini
 [Unit]
-Description=VLANs de SW1
-After=network-online.target
+Description=Puertos y VLANs de SW1 (Open vSwitch)
+After=network-online.target openvswitch-switch.service
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/sbin/sw1-vlans.sh
+ExecStart=/usr/local/sbin/sw1-ovs.sh
 
 [Install]
 WantedBy=multi-user.target
 ```
 
 ```bash
-chmod +x /usr/local/sbin/sw1-vlans.sh
-systemctl enable --now sw1-vlans.service
-bridge vlan show          # comprobación
+chmod +x /usr/local/sbin/sw1-ovs.sh
+systemctl enable --now sw1-ovs.service
+ovs-vsctl show            # comprobación: puertos con su tag o trunks
 ```
 
 ### 3.2 R2: subinterfaces, gateways y ruta por defecto
@@ -504,13 +498,13 @@ Esta restricción se suma a la ACL de R2, que ya impide que USERS llegue a la VL
 
 | Prueba | Comando | Resultado esperado |
 |---|---|---|
-| Troncal y VLANs | `bridge vlan show` en SW1 | Puertos con su VLAN |
+| Troncal y VLANs | `ovs-vsctl show` en el anfitrión de SW1 | Puertos con su `tag` o `trunks` |
 | Inter-VLAN permitido | `ping 10.10.40.10` desde PC-ADMIN01 | Responde |
 | ACL bloquea | `ping 10.10.10.10` desde PC-USER01 | Sin respuesta, línea `ACL-DENY` en R2 |
 | Servicio permitido | `curl http://10.10.40.10` desde PC-USER01 | Responde |
 | Servicio denegado | `ssh 10.10.40.10` desde PC-USER01 | Bloqueado |
 | DHCP registrado | `dhclient -v eth0` en PC-USER01 | Recibe siempre 10.10.20.10 |
-| DHCP no registrado | Arrancar PC-INVITADO (MAC sin registrar, puerto libre `br-p2`) y pedir IP | No recibe IP; en `journalctl -u isc-dhcp-server` de R2 hay DISCOVER sin OFFER |
+| DHCP no registrado | Quitar a PC-USER02 de `usuarios.csv`, ejecutar `dhcp-reservas.sh` en R2 y pedir IP de nuevo en PC-USER02 | No recibe IP; en `journalctl -u isc-dhcp-server` de R2 hay DISCOVER sin OFFER. Al volver a registrarlo recibe 10.10.20.11 |
 
 ## 4. Estudiante 2: proxy Squid transparente
 
@@ -1400,7 +1394,7 @@ Las tres reglas cubren los tres ejemplos del enunciado: escaneo de puertos (20 S
 ### 7.5 Wireshark y punto de captura
 
 - **Captura en el firewall:** `tcpdump -ni eth2 -w /tmp/dmz.pcap` en FW; el archivo se copia a un cliente con Wireshark (`scp`). FW es un punto de captura válido porque el tráfico lo atraviesa.
-- **Tráfico que cruza el switch:** el puerto `eth7` de SW1 es un SPAN que copia la troncal (sección 3.1). Se conecta un cliente con Wireshark a ese puerto y se captura allí. El modo promiscuo solo no bastaría: un switch no entrega a un puerto las tramas de otros equipos.
+- **Tráfico que cruza el switch:** `span0` es el puerto espejo (SPAN) de SW1 y recibe una copia de todo el tráfico del switch (sección 3.1). Wireshark captura en `span0` desde el anfitrión de SW1. El modo promiscuo solo no bastaría: un switch no entrega a un puerto las tramas de otros equipos.
 
 Captura sugerida para la entrega: el saludo de WireGuard (UDP 51820) en `eth0` de FW, o una solicitud HTTP a WEB01 con las etiquetas 802.1Q visibles en el SPAN.
 
@@ -1434,7 +1428,7 @@ Captura sugerida para la entrega: el saludo de WireGuard (UDP 51820) en `eth0` d
 |---|---|
 | Dos VM del mismo segmento no se ven | En el anfitrión: `bridge link` (cada tap en su bridge), MAC únicas, y `sysctl net.bridge.bridge-nf-call-iptables` en 0 si existe |
 | R-EDGE sin salida por un ISP | Anclaje USB activo en el teléfono, su interfaz dentro del bridge (`bridge link` en el anfitrión) y que la red del teléfono no haya cambiado |
-| Sin ping entre equipos de la misma VLAN | `bridge vlan show` en SW1 |
+| Sin ping entre equipos de la misma VLAN | `ovs-vsctl show` en el anfitrión de SW1: cada tap con su `tag` correcto |
 | Sin ping entre VLANs | `ip_forward` en R2 y `nft list ruleset` |
 | VLAN sin Internet | Rutas de retorno en PROXY y FW; `ip route get 8.8.8.8` en cada salto |
 | Web no carga pero el ping sí | `systemctl status squid`, `ip rule`, `ip route show table 100` y `rp_filter` en PROXY |
