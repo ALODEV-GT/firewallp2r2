@@ -9,6 +9,8 @@ Esta guía aplica el plan de `direccionamiento.md`. Todas las direcciones, rutas
 > - **Lógica del Multi-WAN:** generación de reglas desde `politicas.conf` y los cambios de rutas del failover, con interfaces simuladas.
 > - **Open vSwitch y WireGuard:** creación de puertos, VLAN y espejo, y el script de peers, sin tráfico real.
 >
+> - **Firewall (FW):** ya está configurado en su equipo real, y sus reglas se probaron allí con vecinos simulados (sección 7.2).
+>
 > No se ha probado nada con los enlaces físicos, los teléfonos ni el recorrido completo entre equipos. Hay que montarlo en el orden de la sección 2.3; los puntos con más riesgo están marcados con **Verificar**.
 >
 > El enunciado exige que cada integrante pueda explicar su parte. Cada sección dice qué hace cada bloque para que sirva de base a esa explicación.
@@ -194,10 +196,10 @@ Los segmentos que unen componentes de dos equipos son cables Ethernet:
 
 | Enlace | Red | Un extremo | Otro extremo |
 |---|---|---|---|
-| R-EDGE – FW | 10.10.0.0/30 | Interfaz física del anfitrión del estudiante 3, unida a `br-edge-fw` | FW `eth0` |
-| FW – PROXY | 10.10.0.4/30 | FW `eth1` | PROXY `enp0s31f6` |
+| R-EDGE – FW | 10.10.0.0/30 | Interfaz física del anfitrión del estudiante 3, unida a `br-edge-fw` | FW `enp3s0` |
+| FW – PROXY | 10.10.0.4/30 | FW `enx00e04c360188` | PROXY `enp0s31f6` |
 | PROXY – R2 | 10.10.0.8/30 | PROXY `enx9c69d3101d16` | Interfaz física del anfitrión del estudiante 1, unida a `br-proxy-r2` |
-| FW – DMZ | 10.10.50.0/28 | FW `eth2` | Interfaz física del anfitrión del estudiante 4, unida a `br-dmz` |
+| FW – DMZ | 10.10.50.0/28 | FW `enx00e04c3604ff` | Interfaz física del anfitrión del estudiante 4, unida a `br-dmz` |
 
 Interfaces Ethernet físicas que necesita cada equipo (con adaptadores USB-Ethernet si faltan):
 
@@ -1371,43 +1373,85 @@ ngrok abre una conexión **saliente** por TCP 443 desde WEB01 hacia su nube y de
 
 ### 7.1 Red de FW
 
-> **Equipo real del encargado.** FW es un equipo físico con Debian en modo texto, así que sus interfaces no se llaman `eth0`, `eth1` y `eth2`. Necesita tres interfaces Ethernet; si el equipo tiene menos, se completan con adaptadores USB-Ethernet. Los nombres reales se ven con `ip link` y hay que usarlos en tres sitios:
->
-> - **Red:** `/etc/network/interfaces` (abajo).
-> - **Firewall:** las definiciones `WAN`, `INSIDE` y `DMZ` al inicio de `nftables.conf` (sección 7.2). El resto de las reglas usa esos nombres, así que no cambia.
-> - **IDS:** la lista `af-packet` de `suricata.yaml` (sección 7.4).
->
-> | En esta guía | Papel | Conectada por cable a |
-> |---|---|---|
-> | `eth0` | WAN | R-EDGE |
-> | `eth1` | Interna | PROXY (`enp0s31f6`) |
-> | `eth2` | DMZ | Anfitrión del estudiante 4 (`br-dmz`) |
->
-> Los adaptadores USB-Ethernet reciben nombres del tipo `enx…` derivados de su MAC, así que el nombre no cambia aunque se conecten en otro puerto.
+> **Estado: aplicado en el equipo real.** FW es un equipo físico con Debian 13 en modo texto. Todo lo de esta sección 7 está instalado en él, y los archivos tal como quedaron están en la carpeta `fw/` del repositorio.
 
-`/etc/network/interfaces`:
+Interfaces reales de FW:
+
+| Papel | Interfaz real | Dirección | Conectada por cable a |
+|---|---|---|---|
+| WAN | `enp3s0` (integrada) | `10.10.0.2/30` | R-EDGE (`br-edge-fw` en el anfitrión del estudiante 3) |
+| Interna | `enx00e04c360188` (USB-Ethernet) | `10.10.0.5/30` | PROXY (`enp0s31f6`) |
+| DMZ | `enx00e04c3604ff` (USB-Ethernet) | `10.10.50.1/28` | Anfitrión del estudiante 4 (`br-dmz`) |
+| Gestión | `wlp4s0` (Wi-Fi) | DHCP | No forma parte de la topología |
+
+La Wi-Fi da Internet propia al equipo (instalar paquetes, administrarlo) y no reenvía tráfico de la red: ninguna regla del firewall la menciona, así que todo lo que intentara cruzar por ella cae en la denegación por defecto.
+
+Como la ruta por defecto del equipo es la de la Wi-Fi, la salida hacia R-EDGE del tráfico **reenviado** se define aparte, con enrutamiento por política:
+
+- **Tabla 100:** contiene solo `default via 10.10.0.1` (R-EDGE).
+- **Regla 100:** lo que entra por la interfaz interna o por la DMZ consulta primero la tabla principal sin su ruta por defecto, de modo que los destinos internos se resuelven con las rutas estáticas.
+- **Regla 101:** si no hubo coincidencia, usa la tabla 100 y sale por R-EDGE.
+
+`/etc/network/interfaces` (`fw/interfaces`):
 
 ```
-auto eth0
-iface eth0 inet static
+auto lo
+iface lo inet loopback
+
+# Gestión: Wi-Fi con Internet propia del equipo (no forma parte de la topología).
+allow-hotplug wlp4s0
+iface wlp4s0 inet dhcp
+    wpa-conf /etc/wpa_supplicant/wpa_supplicant.conf
+
+# WAN: hacia R-EDGE (10.10.0.1). Sin "gateway": la salida del tráfico
+# reenviado está en la tabla 100 (fw-rutas.sh).
+allow-hotplug enp3s0
+iface enp3s0 inet static
     address 10.10.0.2/30
-    gateway 10.10.0.1
+    up /usr/local/sbin/fw-rutas.sh
 
-auto eth1
-iface eth1 inet static
+# Interna: hacia PROXY (10.10.0.6).
+allow-hotplug enx00e04c360188
+iface enx00e04c360188 inet static
     address 10.10.0.5/30
-    up ip route add 10.10.0.8/30  via 10.10.0.6
-    up ip route add 10.10.10.0/27 via 10.10.0.6
-    up ip route add 10.10.20.0/25 via 10.10.0.6
-    up ip route add 10.10.30.0/28 via 10.10.0.6
-    up ip route add 10.10.40.0/27 via 10.10.0.6
+    up ip route replace 10.10.0.8/30  via 10.10.0.6
+    up ip route replace 10.10.10.0/27 via 10.10.0.6
+    up ip route replace 10.10.20.0/25 via 10.10.0.6
+    up ip route replace 10.10.30.0/28 via 10.10.0.6
+    up ip route replace 10.10.40.0/27 via 10.10.0.6
+    up /usr/local/sbin/fw-rutas.sh
 
-auto eth2
-iface eth2 inet static
+# DMZ: VPN-SRV (10.10.50.2) y servidores web.
+allow-hotplug enx00e04c3604ff
+iface enx00e04c3604ff inet static
     address 10.10.50.1/28
-    up ip route add 10.200.10.0/28 via 10.10.50.2
-    up ip route add 10.200.20.0/27 via 10.10.50.2
+    up ip route replace 10.200.10.0/28 via 10.10.50.2
+    up ip route replace 10.200.20.0/27 via 10.10.50.2
+    up /usr/local/sbin/fw-rutas.sh
 ```
+
+`/usr/local/sbin/fw-rutas.sh` (`fw/fw-rutas.sh`):
+
+```bash
+#!/bin/bash
+# FW: enrutamiento del tráfico reenviado (ver explicación arriba).
+WAN=enp3s0
+INSIDE=enx00e04c360188
+DMZ=enx00e04c3604ff
+REDGE=10.10.0.1
+
+for pref in 100 101; do
+  while ip rule del pref "$pref" 2>/dev/null; do :; done
+done
+for ifc in "$INSIDE" "$DMZ"; do
+  ip rule add pref 100 iif "$ifc" lookup main suppress_prefixlength 0
+  ip rule add pref 101 iif "$ifc" lookup 100
+done
+ip route replace default via "$REDGE" dev "$WAN" table 100 2>/dev/null || true
+exit 0
+```
+
+Si se quita la Wi-Fi de gestión, basta con añadir `gateway 10.10.0.1` a `enp3s0`; el script puede quedarse.
 
 ### 7.2 Firewall nftables
 
@@ -1417,9 +1461,9 @@ iface eth2 inet static
 #!/usr/sbin/nft -f
 flush ruleset
 
-define WAN    = "eth0"
-define INSIDE = "eth1"
-define DMZ    = "eth2"
+define WAN    = "enp3s0"
+define INSIDE = "enx00e04c360188"
+define DMZ    = "enx00e04c3604ff"
 
 define ADMIN     = 10.10.10.0/27
 define USERS     = 10.10.20.0/25
@@ -1444,6 +1488,10 @@ table inet fw {
     ip saddr { $ADMIN, $VPN_ADMIN } icmp type echo-request accept
     # Ping de los equipos conectados directamente, para comprobar los enlaces.
     ip saddr $VECINOS icmp type echo-request accept
+    # IPv6 de la Wi-Fi de gestión: descubrimiento de vecinos y de routers.
+    meta l4proto ipv6-icmp accept
+    # Difusión y multidifusión (ruido de red): se descarta sin registrar.
+    meta pkttype { broadcast, multicast } drop
     log prefix "FW-DENY " drop
   }
 
@@ -1500,6 +1548,8 @@ nft -c -f /etc/nftables.conf      # valida sin aplicar
 systemctl enable --now nftables
 ```
 
+Las reglas cargadas se probaron en el propio equipo con `fw/prueba-reglas.sh`: el script crea vecinos simulados (R-EDGE, PROXY con los equipos de las VLAN, y la DMZ con los peers VPN) en espacios de red aislados, carga este mismo `nftables.conf` y comprueba 41 flujos de la matriz de seguridad, permitidos y bloqueados. Resultado: 41 de 41 correctos. No sustituye a la prueba con los equipos reales, pero confirma que las reglas hacen lo que dice la matriz.
+
 Puntos para la explicación:
 
 - **Denegación por defecto:** `policy drop` más la última regla; solo pasa lo que una regla permite de forma explícita.
@@ -1512,9 +1562,14 @@ Puntos para la explicación:
 `/etc/rsyslog.d/30-firewall.conf`:
 
 ```
-:msg, contains, "FW-" /var/log/firewall/fw.log
-& stop
+# Registros del firewall: solo mensajes del kernel (nftables) con prefijo FW-.
+if ($syslogfacility-text == "kern" and $msg contains "FW-") then {
+    action(type="omfile" file="/var/log/firewall/fw.log" fileOwner="root" fileGroup="adm" fileCreateMode="0640")
+    stop
+}
 ```
+
+El filtro exige que el mensaje venga del kernel. Sin esa condición, cualquier otro mensaje que contenga "FW-" (por ejemplo, el registro de un comando `sudo grep FW-DENY …`) acabaría en el archivo de auditoría.
 
 ```bash
 mkdir -p /var/log/firewall
@@ -1526,7 +1581,7 @@ systemctl restart rsyslog
 
 Cada línea incluye fecha y hora, acción (`FW-ALLOW` o `FW-DENY`), IP de origen (`SRC`), destino (`DST`), protocolo (`PROTO`) y puerto (`DPT`). Solo `root` y los miembros del grupo `adm` pueden leer el archivo; los administradores se añaden con `usermod -aG adm <usuario>`.
 
-**Verificar** que el archivo conserve los permisos tras la primera escritura de rsyslog (`ls -l /var/log/firewall`).
+Comprobado en el equipo: tras escribir rsyslog, el archivo sigue como `root:adm` con modo `640`, y un usuario común recibe "permiso denegado". La rotación semanal está en `/etc/logrotate.d/firewall` (`fw/logrotate-firewall`).
 
 ### 7.4 IDS con Suricata
 
@@ -1539,9 +1594,15 @@ vars:
     EXTERNAL_NET: "!$HOME_NET"
 
 af-packet:
-  - interface: eth0
-  - interface: eth1
-  - interface: eth2
+  - interface: enx00e04c3604ff     # DMZ
+    cluster-id: 97
+    cluster-type: cluster_flow
+    defrag: yes
+  - interface: enx00e04c360188     # interna
+    cluster-id: 98
+    cluster-type: cluster_flow
+    defrag: yes
+  - interface: enp3s0              # WAN (entrada original, cluster-id 99)
 
 default-rule-path: /etc/suricata/rules
 rule-files:
@@ -1562,14 +1623,16 @@ systemctl enable --now suricata
 tail -f /var/log/suricata/fast.log             # alertas
 ```
 
+Los cambios exactos sobre el archivo original están en `fw/suricata.yaml.diff`. Suricata arranca en el equipo con las tres interfaces y las tres reglas cargadas; las alertas no se han probado todavía, porque necesitan tráfico real por los cables.
+
 Las tres reglas cubren los tres ejemplos del enunciado: escaneo de puertos (20 SYN en 5 s desde un mismo origen), múltiples intentos de conexión (5 SYN a SSH en 30 s) y una firma definida (la cadena `prueba-ids` en una URL). Suricata corre en FW porque por ahí pasa todo el tráfico entre zonas.
 
 ### 7.5 Wireshark y punto de captura
 
-- **Captura en el firewall:** `tcpdump -ni eth2 -w /tmp/dmz.pcap` en FW; el archivo se copia a un cliente con Wireshark (`scp`). FW es un punto de captura válido porque el tráfico lo atraviesa.
+- **Captura en el firewall:** `tcpdump -ni enx00e04c3604ff -w /tmp/dmz.pcap` en FW; el archivo se copia a un cliente con Wireshark (`scp`). FW es un punto de captura válido porque el tráfico lo atraviesa.
 - **Tráfico que cruza el switch:** `span0` es el puerto espejo (SPAN) de SW1 y recibe una copia de todo el tráfico del switch (sección 3.1). Wireshark captura en `span0` desde el anfitrión de SW1. El modo promiscuo solo no bastaría: un switch no entrega a un puerto las tramas de otros equipos.
 
-Captura sugerida para la entrega: el saludo de WireGuard (UDP 51820) en `eth0` de FW, o una solicitud HTTP a WEB01 con las etiquetas 802.1Q visibles en el SPAN.
+Captura sugerida para la entrega: el saludo de WireGuard (UDP 51820) en `enp3s0` de FW, o una solicitud HTTP a WEB01 con las etiquetas 802.1Q visibles en el SPAN.
 
 ### 7.6 Pruebas del estudiante 5
 
@@ -1647,6 +1710,6 @@ Diferencias entre lo que cada encargado ha informado y lo que esta guía necesit
 
 ### Estudiante 5 (FW)
 
-1. **Interfaces:** FW es un equipo físico y necesita tres interfaces Ethernet (adaptadores USB-Ethernet si faltan). Hay que sustituir `eth0`, `eth1` y `eth2` por sus nombres reales (sección 7.1).
+1. **Configuración aplicada:** red, reglas, registros y Suricata ya están instalados en el equipo (sección 7 y carpeta `fw/`). Falta conectar los tres cables y repetir las pruebas con los equipos reales.
 2. **Tráfico web del proxy:** si el estudiante 2 no usa TPROXY, añadir una regla que permita TCP 80 desde `10.10.0.6` hacia Internet.
 3. **Puerto espejo:** coordinar con el estudiante 1 la captura en `span0`.

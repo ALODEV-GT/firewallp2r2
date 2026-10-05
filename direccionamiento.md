@@ -10,6 +10,7 @@ Cadena principal: ISP1/ISP2 → R-EDGE → FW → PROXY → R2 → VLANs. La DMZ
 - **DHCP en R2:** el servicio DHCP restringido corre en R2 y escucha solo en `eth1.20`. El diagrama del enunciado lo dibuja dentro de la VLAN de Usuarios; si se exige un equipo aparte, puede moverse a una VM en esa VLAN con los mismos archivos.
 - **Rangos VPN:** VPN-ADMIN usa `10.200.10.0/28` y VPN-USERS `10.200.20.0/27`, definidos por el encargado de la VPN. Son más pequeños que el ejemplo `/24` del enunciado; el firewall y las rutas deben usar estos mismos rangos.
 - **DNS de las VLAN 10 y 20:** sus clientes usan como DNS la caché de PROXY (`10.10.0.9`), para que Squid y los clientes resuelvan igual. Hacia Internet, esas consultas salen con la IP `10.10.0.6`.
+- **Wi-Fi de gestión en FW:** FW conserva una Wi-Fi (`wlp4s0`) con Internet propia para administrarlo. No reenvía tráfico de la red. Por eso su ruta por defecto hacia R-EDGE (`10.10.0.1`) no está en la tabla principal sino en la tabla 100, que solo usa el tráfico reenviado (ver `configuraciones.md`, sección 7.1).
 - **Puertos elegidos:** 51820 para WireGuard y 8080 para el portal de Squid.
 - **VPN-ADMIN hacia Zabbix:** el enunciado restringe el dashboard a la VLAN de Administración; quitar esa regla si se interpreta de forma estricta.
 
@@ -49,9 +50,9 @@ Cadena principal: ISP1/ISP2 → R-EDGE → FW → PROXY → R2 → VLANs. La DMZ
 | R-EDGE | eth0 (ISP1) | 192.168.41.2 * | 255.255.255.0 | 192.168.41.1 * | 192.168.41.0/24 * |
 | R-EDGE | eth1 (ISP2) | 192.168.42.2 * | 255.255.255.0 | 192.168.42.1 * | 192.168.42.0/24 * |
 | R-EDGE | eth2 | 10.10.0.1 | 255.255.255.252 | — | 10.10.0.0/30 |
-| FW | eth0 | 10.10.0.2 | 255.255.255.252 | 10.10.0.1 | 10.10.0.0/30 |
-| FW | eth1 | 10.10.0.5 | 255.255.255.252 | — | 10.10.0.4/30 |
-| FW | eth2 (DMZ) | 10.10.50.1 | 255.255.255.240 | — | 10.10.50.0/28 |
+| FW | enp3s0 (WAN) | 10.10.0.2 | 255.255.255.252 | 10.10.0.1 | 10.10.0.0/30 |
+| FW | enx00e04c360188 (interna) | 10.10.0.5 | 255.255.255.252 | — | 10.10.0.4/30 |
+| FW | enx00e04c3604ff (DMZ) | 10.10.50.1 | 255.255.255.240 | — | 10.10.50.0/28 |
 | PROXY | eth0 | 10.10.0.6 | 255.255.255.252 | 10.10.0.5 | 10.10.0.4/30 |
 | PROXY | eth1 | 10.10.0.9 | 255.255.255.252 | — | 10.10.0.8/30 |
 | R2 | eth0 | 10.10.0.10 | 255.255.255.252 | 10.10.0.9 | 10.10.0.8/30 |
@@ -99,14 +100,14 @@ Solo rutas estáticas; las redes conectadas directamente no se listan.
 | R-EDGE | 10.10.0.0 | 255.255.0.0 | 10.10.0.2 | eth2 |
 | R-EDGE | 10.200.10.0 | 255.255.255.240 | 10.10.0.2 | eth2 |
 | R-EDGE | 10.200.20.0 | 255.255.255.224 | 10.10.0.2 | eth2 |
-| FW | 0.0.0.0 | 0.0.0.0 | 10.10.0.1 | eth0 |
-| FW | 10.10.0.8 | 255.255.255.252 | 10.10.0.6 | eth1 |
-| FW | 10.10.10.0 | 255.255.255.224 | 10.10.0.6 | eth1 |
-| FW | 10.10.20.0 | 255.255.255.128 | 10.10.0.6 | eth1 |
-| FW | 10.10.30.0 | 255.255.255.240 | 10.10.0.6 | eth1 |
-| FW | 10.10.40.0 | 255.255.255.224 | 10.10.0.6 | eth1 |
-| FW | 10.200.10.0 | 255.255.255.240 | 10.10.50.2 | eth2 |
-| FW | 10.200.20.0 | 255.255.255.224 | 10.10.50.2 | eth2 |
+| FW | 0.0.0.0 | 0.0.0.0 | 10.10.0.1 | enp3s0 |
+| FW | 10.10.0.8 | 255.255.255.252 | 10.10.0.6 | enx00e04c360188 |
+| FW | 10.10.10.0 | 255.255.255.224 | 10.10.0.6 | enx00e04c360188 |
+| FW | 10.10.20.0 | 255.255.255.128 | 10.10.0.6 | enx00e04c360188 |
+| FW | 10.10.30.0 | 255.255.255.240 | 10.10.0.6 | enx00e04c360188 |
+| FW | 10.10.40.0 | 255.255.255.224 | 10.10.0.6 | enx00e04c360188 |
+| FW | 10.200.10.0 | 255.255.255.240 | 10.10.50.2 | enx00e04c3604ff |
+| FW | 10.200.20.0 | 255.255.255.224 | 10.10.50.2 | enx00e04c3604ff |
 | PROXY | 0.0.0.0 | 0.0.0.0 | 10.10.0.5 | eth0 |
 | PROXY | 10.10.10.0 | 255.255.255.224 | 10.10.0.10 | eth1 |
 | PROXY | 10.10.20.0 | 255.255.255.128 | 10.10.0.10 | eth1 |

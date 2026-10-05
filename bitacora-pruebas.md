@@ -25,7 +25,7 @@ Lista de todo lo que hay que probar, en el orden de montaje de `configuraciones.
 |---|---|---|---|---|---|
 | PRE-01 | Red del teléfono 1 (ISP1) | `ip -4 addr show` e `ip route` en el anfitrión del estudiante 3 | Red, IP y gateway anotados | | |
 | PRE-02 | Red del teléfono 2 (ISP2) | Igual, con el segundo teléfono | Red distinta de la del teléfono 1 | | |
-| PRE-03 | Interfaces reales de FW | `ip link` en FW | Tres interfaces Ethernet identificadas (WAN, interna, DMZ) | | |
+| PRE-03 | Interfaces reales de FW | `ip link` en FW | Tres interfaces Ethernet identificadas (WAN, interna, DMZ) | OK | WAN `enp3s0`, interna `enx00e04c360188`, DMZ `enx00e04c3604ff` |
 | PRE-04 | Interfaces reales de PROXY | `ip link` en PROXY | `enp0s31f6` hacia FW, `enx9c69d3101d16` hacia R2 | | |
 | PRE-05 | Interfaz física de cada anfitrión | `ip link` en los anfitriones de los estudiantes 1, 3 y 4 | Una interfaz Ethernet libre para el cable | | |
 | PRE-06 | Paquetes instalados | `dpkg -l` de los paquetes de la sección 2.1 en cada nodo | Todos instalados antes de cablear | | |
@@ -151,7 +151,7 @@ Con las reglas definitivas de FW cargadas.
 
 | ID | Prueba | Desde y comando | Resultado esperado | Estado | Evidencia y notas |
 |---|---|---|---|---|---|
-| FW-01 | Denegación por defecto | FW: `nft list ruleset` | `policy drop` en `input` y `forward` | | |
+| FW-01 | Denegación por defecto | FW: `nft list ruleset` | `policy drop` en `input` y `forward` | OK | Comprobado en FW el 2026-10-04; además, 41 de 41 flujos correctos con `fw/prueba-reglas.sh` (vecinos simulados) |
 | FW-02 | Acceso permitido y registrado | PC-ADMIN01: `curl -I http://10.10.50.10`; FW: `tail /var/log/firewall/fw.log` | `200` y línea `FW-ALLOW` | | |
 | FW-03 | Acceso denegado y registrado | PC-USER01: `ssh 10.10.50.10` | Sin conexión y línea `FW-DENY` | | |
 | FW-04 | DMZ aislada de la red interna | WEB01: `ping -c 3 10.10.10.10` | Sin respuesta; `FW-DENY` | | |
@@ -159,9 +159,9 @@ Con las reglas definitivas de FW cargadas.
 | FW-06 | Seguimiento de conexiones | Repetir FW-02 y contar líneas nuevas en `fw.log` | Una sola línea por conexión | | |
 | FW-07 | Salida de ngrok | FW: `grep 10.10.50.10 /var/log/firewall/fw.log` con el túnel activo | `FW-ALLOW` hacia el puerto 443 | | |
 | FW-08 | Campos del registro | FW: `tail /var/log/firewall/fw.log` | Fecha y hora, `SRC`, `DST`, `PROTO`, `DPT` y acción | | |
-| FW-09 | Registros protegidos | FW, con un usuario común: `cat /var/log/firewall/fw.log` | Permiso denegado | | |
-| FW-10 | Permisos tras escribir | FW: `ls -l /var/log/firewall` | `root:adm` con `640` | | |
-| IDS-01 | Suricata activo | FW: `systemctl is-active suricata` | `active` | | |
+| FW-09 | Registros protegidos | FW, con un usuario común: `cat /var/log/firewall/fw.log` | Permiso denegado | OK | Usuario `firewall`: "Permission denied" |
+| FW-10 | Permisos tras escribir | FW: `ls -l /var/log/firewall` | `root:adm` con `640` | OK | `-rw-r----- root adm fw.log` tras escribir rsyslog |
+| IDS-01 | Suricata activo | FW: `systemctl is-active suricata` | `active` | OK | Activo con las tres interfaces y 3 reglas cargadas; alertas aún sin probar |
 | IDS-02 | Escaneo de puertos | PC-ADMIN01: `nmap -sS 10.10.50.10`; FW: `tail /var/log/suricata/fast.log` | Alerta con sid `1000001` | | |
 | IDS-03 | Múltiples intentos de conexión | PC-ADMIN01: `for i in $(seq 8); do nc -z -w 1 10.10.50.10 22; done` | Alerta con sid `1000002` | | |
 | IDS-04 | Firma definida | PC-ADMIN01: `curl http://10.10.50.10/prueba-ids` | Alerta con sid `1000003` | | |
