@@ -53,8 +53,8 @@ Con FW en política abierta temporal, como indica la sección 2.3.
 |---|---|---|---|---|---|
 | ENL-01 | R2 – PROXY | R2: `ping -c 3 10.10.0.9` | Responde | | |
 | ENL-02 | PROXY – FW | PROXY: `ping -c 3 10.10.0.5` | Responde | | |
-| ENL-03 | FW – R-EDGE | FW: `ping -c 3 10.10.0.1` | Responde | | |
-| ENL-04 | FW – DMZ | FW: `ping -c 3 10.10.50.2` y `ping -c 3 10.10.50.10` | Responden | | |
+| ENL-03 | FW – R-EDGE | FW: `ping -c 3 10.10.0.1` | Responde | OK | 2026-10-05: 3/3 desde FW; además Internet responde a través de R-EDGE (8.8.8.8 y 1.1.1.1, 3/3) |
+| ENL-04 | FW – DMZ | FW: `ping -c 3 10.10.50.2` y `ping -c 3 10.10.50.10` | Responden | OK | 2026-10-05: VPN-SRV y WEB01 3/3; WEB01 y WEB02 responden HTTP 200 (misma MAC: es una sola máquina) |
 | ENL-05 | Reenvío en cada router | R-EDGE, FW, PROXY y VPN-SRV: `sysctl net.ipv4.ip_forward` | `1` en todos | | |
 | ENL-06 | Rutas de ida y vuelta | PC-ADMIN01: `ping -c 3 10.10.0.1` | Responde (atraviesa R2, PROXY y FW) | | |
 | ENL-07 | Ruta hacia la DMZ | PC-ADMIN01: `ping -c 3 10.10.50.10` | Responde | | |
