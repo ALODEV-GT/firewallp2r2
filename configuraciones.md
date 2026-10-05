@@ -274,6 +274,13 @@ Monta y prueba en este orden; cada paso depende del anterior:
 
 ## 3. Estudiante 1: LAN, VLANs, router, DHCP y Zabbix
 
+> **Estado: aplicado en los equipos reales.** El estudiante 1 documentó su configuración instalada en `configuracion-estudiante1.md`; ese archivo manda sobre los ejemplos de esta sección. Diferencias con lo escrito aquí, todas válidas:
+>
+> - **Interfaces de R2:** `enp1s0` hacia PROXY (en lugar de `eth0`) y `enp7s0` como troncal, con subinterfaces `enp7s0.10` a `enp7s0.40` (en lugar de `eth1.N`). El DHCP escucha en `enp7s0.20`.
+> - **Máquinas virtuales:** gestionadas con libvirt, no con `vm.sh`. Las MAC registradas en el DHCP son las reales: PC-USER01 `52:54:00:67:62:0a` y PC-USER02 `52:54:00:5f:91:56`.
+> - **Anfitrión:** su interfaz `enp0s31f6` está unida a `br-proxy-r2` mediante Netplan.
+> - **ACL:** añade un control de direcciones de origen por VLAN y limita la frecuencia de los registros `ACL-DENY`.
+
 ### 3.1 SW1: VLANs, troncal y puertos de acceso
 
 SW1 es un Open vSwitch que corre en el anfitrión Ubuntu del estudiante 1; no es una VM. Se configura por consola con `ovs-vsctl`, y cada VM se conecta a uno de sus puertos mediante una interfaz tap.
@@ -1679,19 +1686,19 @@ Diferencias entre lo que cada encargado ha informado y lo que esta guía necesit
 
 ### Estudiante 1 (R2, SW1, Zabbix)
 
-1. **Enlace hacia el proxy:** unir una interfaz física del anfitrión a `br-proxy-r2` y conectarla por cable a PROXY.
-2. **Puerto espejo:** crear `span0` (sección 3.1) antes de las pruebas del estudiante 5.
-3. **Zabbix:** restringir el frontend a la VLAN de Administración (sección 3.5).
-4. **Sin redirección web:** R2 no debe redirigir el puerto 80; lo hace PROXY.
-5. **DNS de los clientes:** el DHCP y PC-ADMIN01 deben usar `10.10.0.9` como servidor DNS (secciones 3.4 y 3.6).
+Los cinco puntos que había aquí están resueltos según `configuracion-estudiante1.md` (enlace hacia el proxy, puerto espejo, restricción de Zabbix, sin redirección web y DNS `10.10.0.9`). Queda:
+
+1. **Host R-EDGE en Zabbix:** habilitarlo cuando haya conectividad; las interfaces WAN de R-EDGE son `eth0` (ISP1) y `eth1` (ISP2).
+2. **Reinicio del anfitrión:** no se ha probado un reinicio completo del equipo Ubuntu.
 
 ### Estudiante 2 (PROXY)
 
 1. **Desvío en PROXY:** quitar la petición de que R2 redirija el puerto 80 hacia `10.10.0.9:3129`; la regla va en el propio PROXY (sección 4.3).
 2. **Alcance del desvío:** solo origen VLAN 10 y 20, y sin destinos internos (`10.10.0.0/16`).
-3. **Reenvío:** activar `ip_forward`.
-4. **HTTPS:** añadir el filtrado por SNI y la caché DNS de la sección 4.4, o preparar dominios de prueba que funcionen por HTTP. Sin el filtrado, dominios como facebook.com no se bloquean ni se registran; sin la caché, parte de las conexiones HTTPS permitidas falla.
-5. **IP de origen:** usar TPROXY (sección 4.2), o avisar a los estudiantes 3 y 5 de que el tráfico web saldrá con la IP `10.10.0.6`.
+3. **Reenvío:** activar `ip_forward`. **Es lo que hoy impide la integración:** los clientes de las VLAN llegan a las dos direcciones del proxy, pero su traza hacia Internet se detiene en él, y al firewall no ha llegado ningún paquete con origen en las VLAN.
+4. **Caché DNS:** `10.10.0.9` no responde consultas DNS; los clientes de las VLAN 10 y 20 ya la tienen configurada como servidor (sección 4.4).
+5. **HTTPS:** añadir el filtrado por SNI y la caché DNS de la sección 4.4, o preparar dominios de prueba que funcionen por HTTP. Sin el filtrado, dominios como facebook.com no se bloquean ni se registran; sin la caché, parte de las conexiones HTTPS permitidas falla.
+6. **IP de origen:** usar TPROXY (sección 4.2), o avisar a los estudiantes 3 y 5 de que el tráfico web saldrá con la IP `10.10.0.6`.
 
 ### Estudiante 3 (R-EDGE)
 
