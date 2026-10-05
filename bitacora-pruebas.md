@@ -151,7 +151,7 @@ Con las reglas definitivas de FW cargadas.
 
 | ID | Prueba | Desde y comando | Resultado esperado | Estado | Evidencia y notas |
 |---|---|---|---|---|---|
-| FW-01 | Denegación por defecto | FW: `nft list ruleset` | `policy drop` en `input` y `forward` | OK | Comprobado en FW el 2026-10-04; además, 41 de 41 flujos correctos con `fw/prueba-reglas.sh` (vecinos simulados) |
+| FW-01 | Denegación por defecto | FW: `nft list ruleset` | `policy drop` en `input` y `forward` | OK | Comprobado en FW el 2026-10-04; además, 41 de 41 flujos correctos con `firewall_config/pruebas/prueba-reglas.sh` (vecinos simulados) |
 | FW-02 | Acceso permitido y registrado | PC-ADMIN01: `curl -I http://10.10.50.10`; FW: `tail /var/log/firewall/fw.log` | `200` y línea `FW-ALLOW` | | |
 | FW-03 | Acceso denegado y registrado | PC-USER01: `ssh 10.10.50.10` | Sin conexión y línea `FW-DENY` | | |
 | FW-04 | DMZ aislada de la red interna | WEB01: `ping -c 3 10.10.10.10` | Sin respuesta; `FW-DENY` | | |

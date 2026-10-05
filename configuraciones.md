@@ -1373,7 +1373,7 @@ ngrok abre una conexión **saliente** por TCP 443 desde WEB01 hacia su nube y de
 
 ### 7.1 Red de FW
 
-> **Estado: aplicado en el equipo real.** FW es un equipo físico con Debian 13 en modo texto. Todo lo de esta sección 7 está instalado en él, y los archivos tal como quedaron están en la carpeta `fw/` del repositorio.
+> **Estado: aplicado en el equipo real.** FW es un equipo físico con Debian 13 en modo texto. Todo lo de esta sección 7 está instalado en él, y los archivos tal como quedaron, con su explicación, están en la carpeta `firewall_config/` del repositorio.
 
 Interfaces reales de FW:
 
@@ -1392,7 +1392,7 @@ Como la ruta por defecto del equipo es la de la Wi-Fi, la salida hacia R-EDGE de
 - **Regla 100:** lo que entra por la interfaz interna o por la DMZ consulta primero la tabla principal sin su ruta por defecto, de modo que los destinos internos se resuelven con las rutas estáticas.
 - **Regla 101:** si no hubo coincidencia, usa la tabla 100 y sale por R-EDGE.
 
-`/etc/network/interfaces` (`fw/interfaces`):
+`/etc/network/interfaces` (`firewall_config/sistema/etc/network/interfaces`):
 
 ```
 auto lo
@@ -1430,7 +1430,7 @@ iface enx00e04c3604ff inet static
     up /usr/local/sbin/fw-rutas.sh
 ```
 
-`/usr/local/sbin/fw-rutas.sh` (`fw/fw-rutas.sh`):
+`/usr/local/sbin/fw-rutas.sh` (`firewall_config/sistema/usr/local/sbin/fw-rutas.sh`):
 
 ```bash
 #!/bin/bash
@@ -1548,7 +1548,7 @@ nft -c -f /etc/nftables.conf      # valida sin aplicar
 systemctl enable --now nftables
 ```
 
-Las reglas cargadas se probaron en el propio equipo con `fw/prueba-reglas.sh`: el script crea vecinos simulados (R-EDGE, PROXY con los equipos de las VLAN, y la DMZ con los peers VPN) en espacios de red aislados, carga este mismo `nftables.conf` y comprueba 41 flujos de la matriz de seguridad, permitidos y bloqueados. Resultado: 41 de 41 correctos. No sustituye a la prueba con los equipos reales, pero confirma que las reglas hacen lo que dice la matriz.
+Las reglas cargadas se probaron en el propio equipo con `firewall_config/pruebas/prueba-reglas.sh`: el script crea vecinos simulados (R-EDGE, PROXY con los equipos de las VLAN, y la DMZ con los peers VPN) en espacios de red aislados, carga este mismo `nftables.conf` y comprueba 41 flujos de la matriz de seguridad, permitidos y bloqueados. Resultado: 41 de 41 correctos. No sustituye a la prueba con los equipos reales, pero confirma que las reglas hacen lo que dice la matriz.
 
 Puntos para la explicación:
 
@@ -1581,7 +1581,7 @@ systemctl restart rsyslog
 
 Cada línea incluye fecha y hora, acción (`FW-ALLOW` o `FW-DENY`), IP de origen (`SRC`), destino (`DST`), protocolo (`PROTO`) y puerto (`DPT`). Solo `root` y los miembros del grupo `adm` pueden leer el archivo; los administradores se añaden con `usermod -aG adm <usuario>`.
 
-Comprobado en el equipo: tras escribir rsyslog, el archivo sigue como `root:adm` con modo `640`, y un usuario común recibe "permiso denegado". La rotación semanal está en `/etc/logrotate.d/firewall` (`fw/logrotate-firewall`).
+Comprobado en el equipo: tras escribir rsyslog, el archivo sigue como `root:adm` con modo `640`, y un usuario común recibe "permiso denegado". La rotación semanal está en `/etc/logrotate.d/firewall` (`firewall_config/sistema/etc/logrotate.d/firewall`).
 
 ### 7.4 IDS con Suricata
 
@@ -1623,7 +1623,7 @@ systemctl enable --now suricata
 tail -f /var/log/suricata/fast.log             # alertas
 ```
 
-Los cambios exactos sobre el archivo original están en `fw/suricata.yaml.diff`. Suricata arranca en el equipo con las tres interfaces y las tres reglas cargadas; las alertas no se han probado todavía, porque necesitan tráfico real por los cables.
+Los cambios exactos sobre el archivo original están en `firewall_config/sistema/etc/suricata/suricata.yaml.diff`. Suricata arranca en el equipo con las tres interfaces y las tres reglas cargadas; las alertas no se han probado todavía, porque necesitan tráfico real por los cables.
 
 Las tres reglas cubren los tres ejemplos del enunciado: escaneo de puertos (20 SYN en 5 s desde un mismo origen), múltiples intentos de conexión (5 SYN a SSH en 30 s) y una firma definida (la cadena `prueba-ids` en una URL). Suricata corre en FW porque por ahí pasa todo el tráfico entre zonas.
 
@@ -1710,6 +1710,6 @@ Diferencias entre lo que cada encargado ha informado y lo que esta guía necesit
 
 ### Estudiante 5 (FW)
 
-1. **Configuración aplicada:** red, reglas, registros y Suricata ya están instalados en el equipo (sección 7 y carpeta `fw/`). Falta conectar los tres cables y repetir las pruebas con los equipos reales.
+1. **Configuración aplicada:** red, reglas, registros y Suricata ya están instalados en el equipo (sección 7 y carpeta `firewall_config/`). Falta conectar los tres cables y repetir las pruebas con los equipos reales.
 2. **Tráfico web del proxy:** si el estudiante 2 no usa TPROXY, añadir una regla que permita TCP 80 desde `10.10.0.6` hacia Internet.
 3. **Puerto espejo:** coordinar con el estudiante 1 la captura en `span0`.
