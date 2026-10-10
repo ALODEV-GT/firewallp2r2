@@ -51,8 +51,8 @@ Con FW en política abierta temporal, como indica la sección 2.3.
 
 | ID | Prueba | Desde y comando | Resultado esperado | Estado | Evidencia y notas |
 |---|---|---|---|---|---|
-| ENL-01 | R2 – PROXY | R2: `ping -c 3 10.10.0.9` | Responde | | |
-| ENL-02 | PROXY – FW | PROXY: `ping -c 3 10.10.0.5` | Responde | | |
+| ENL-01 | R2 – PROXY | R2: `ping -c 3 10.10.0.9` | Responde | FALLA | 2026-10-09, visto desde FW: R2 (`10.10.0.10`) no responde a través del proxy; ver incidencia 1 |
+| ENL-02 | PROXY – FW | PROXY: `ping -c 3 10.10.0.5` | Responde | OK | 2026-10-09, desde FW: PROXY 3/3 por sus dos direcciones; su DNS (`10.10.0.9`) responde |
 | ENL-03 | FW – R-EDGE | FW: `ping -c 3 10.10.0.1` | Responde | OK | 2026-10-05: 3/3 desde FW; además Internet responde a través de R-EDGE (8.8.8.8 y 1.1.1.1, 3/3) |
 | ENL-04 | FW – DMZ | FW: `ping -c 3 10.10.50.2` y `ping -c 3 10.10.50.10` | Responden | OK | 2026-10-05: VPN-SRV y WEB01 3/3; WEB01 y WEB02 responden HTTP 200 (misma MAC: es una sola máquina) |
 | ENL-05 | Reenvío en cada router | R-EDGE, FW, PROXY y VPN-SRV: `sysctl net.ipv4.ip_forward` | `1` en todos | | |
@@ -194,6 +194,6 @@ Con las reglas definitivas de FW cargadas.
 
 | N.º | Fecha | Prueba | Qué falló | Causa | Corrección | Responsable |
 |---|---|---|---|---|---|---|
-| 1 | | | | | | |
-| 2 | | | | | | |
+| 1 | 2026-10-09 | ENL-01, ENL-06 | Desde FW no responden R2 ni ningún equipo de las VLAN | Sin determinar. El proxy sí reenvía (aparece como primer salto de la traza); el corte está entre el proxy y R2, o R2 no responde | Pendiente | Estudiantes 1 y 2 |
+| 2 | 2026-10-09 | IDS-01 | Suricata quedó en estado fallido tras reiniciar FW | Arrancó antes de que existieran los adaptadores USB-Ethernet | Archivo de systemd que espera a las interfaces y reintenta (`firewall_config`, sección 7.3); falta confirmarlo con otro reinicio | Estudiante 5 |
 | 3 | | | | | | |

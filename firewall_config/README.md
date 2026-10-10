@@ -13,9 +13,10 @@ Todo lo que aparece aquí está **aplicado en el equipo real**. Los archivos de 
 | Registros de seguridad | Aplicados; permisos comprobados |
 | Suricata (IDS) | Activo en las tres interfaces, con las tres reglas cargadas |
 | Prueba de las reglas con vecinos simulados | 41 de 41 flujos correctos |
-| Prueba con los equipos reales (cables conectados) | **Pendiente** |
+| Enlaces con los vecinos directos | Comprobados: R-EDGE, PROXY, VPN-SRV y WEB01 responden; hay Internet a través de R-EDGE |
+| Pruebas de la bitácora con tráfico real de las VLAN | **Pendiente** (R2 no responde a través del proxy) |
 | Alertas de Suricata con tráfico real | **Pendiente** |
-| Comportamiento tras reiniciar el equipo | **Sin probar** |
+| Comportamiento tras reiniciar el equipo | Comprobado el 2026-10-09: red, rutas, reglas y registros vuelven solos. Suricata falló en ese arranque y se corrigió (sección 7.3); la corrección aún no se ha probado con otro reinicio |
 
 ## 2. El equipo
 
@@ -65,6 +66,8 @@ Archivos configurados en el sistema:
 │       ├── suricata.yaml           Redes propias, interfaces y archivo de reglas (modificado)
 │       └── rules/
 │           └── local.rules         Las tres reglas de detección del proyecto
+│   └── systemd/system/suricata.service.d/
+│       └── 10-esperar-interfaces.conf   Suricata espera a los adaptadores USB
 ├── usr/local/sbin/
 │   └── fw-rutas.sh                 Enrutamiento por política del tráfico reenviado
 └── var/log/
@@ -86,9 +89,10 @@ firewall_config/
 │   │   ├── sysctl.d/99-router.conf
 │   │   ├── rsyslog.d/30-firewall.conf
 │   │   ├── logrotate.d/firewall
-│   │   └── suricata/
-│   │       ├── suricata.yaml.diff  Solo los cambios sobre el archivo original del paquete
-│   │       └── rules/local.rules
+│   │   ├── suricata/
+│   │   │   ├── suricata.yaml.diff  Solo los cambios sobre el archivo original del paquete
+│   │   │   └── rules/local.rules
+│   │   └── systemd/system/suricata.service.d/10-esperar-interfaces.conf
 │   └── usr/local/sbin/fw-rutas.sh
 └── pruebas/
     ├── prueba-reglas.sh            Prueba las reglas con vecinos simulados
@@ -452,6 +456,24 @@ sudo systemctl restart suricata
 sudo tail -f /var/log/suricata/fast.log            # alertas
 ```
 
+### 7.3 `/etc/systemd/system/suricata.service.d/10-esperar-interfaces.conf`
+
+Tras un reinicio del equipo, Suricata arrancó antes de que existieran los dos adaptadores USB-Ethernet, falló con "No such device" y systemd lo abandonó al quinto intento. Este archivo lo corrige: Suricata espera a que existan las dos interfaces y, si falla, reintenta cada 5 segundos sin límite.
+
+```ini
+# FW: Suricata captura en dos adaptadores USB-Ethernet que aparecen tarde en el
+# arranque. Espera a que existan y, si aun así falla, reintenta cada 5 segundos
+# sin límite en lugar de rendirse tras cinco intentos seguidos.
+[Unit]
+Wants=sys-subsystem-net-devices-enx00e04c360188.device sys-subsystem-net-devices-enx00e04c3604ff.device
+After=sys-subsystem-net-devices-enx00e04c360188.device sys-subsystem-net-devices-enx00e04c3604ff.device
+StartLimitIntervalSec=0
+
+[Service]
+Restart=on-failure
+RestartSec=5
+```
+
 ## 8. Servicios
 
 | Servicio | Al arranque | Función |
@@ -520,6 +542,7 @@ sudo cp firewall_config/sistema/etc/rsyslog.d/30-firewall.conf /etc/rsyslog.d/
 sudo cp firewall_config/sistema/etc/logrotate.d/firewall /etc/logrotate.d/
 sudo cp firewall_config/sistema/etc/suricata/rules/local.rules /etc/suricata/rules/
 sudo install -m 755 firewall_config/sistema/usr/local/sbin/fw-rutas.sh /usr/local/sbin/
+sudo cp -r firewall_config/sistema/etc/systemd/system/suricata.service.d /etc/systemd/system/ && sudo systemctl daemon-reload
 sudo patch /etc/suricata/suricata.yaml < firewall_config/sistema/etc/suricata/suricata.yaml.diff
 sudo mkdir -p /var/log/firewall && sudo chown root:adm /var/log/firewall && sudo chmod 750 /var/log/firewall
 sudo sysctl --system
