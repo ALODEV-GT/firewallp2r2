@@ -195,5 +195,5 @@ Con las reglas definitivas de FW cargadas.
 | N.º | Fecha | Prueba | Qué falló | Causa | Corrección | Responsable |
 |---|---|---|---|---|---|---|
 | 1 | 2026-10-09 | ENL-01, ENL-06 | Desde FW no responden R2 ni ningún equipo de las VLAN | Sin determinar. El proxy sí reenvía (aparece como primer salto de la traza); el corte está entre el proxy y R2, o R2 no responde | Pendiente | Estudiantes 1 y 2 |
-| 2 | 2026-10-09 | IDS-01 | Suricata quedó en estado fallido tras reiniciar FW | Arrancó antes de que existieran los adaptadores USB-Ethernet | Archivo de systemd que espera a las interfaces y reintenta (`firewall_config`, sección 7.3); falta confirmarlo con otro reinicio | Estudiante 5 |
+| 2 | 2026-10-09 | IDS-01 | Suricata quedó en estado fallido tras reiniciar FW | Arrancó antes de que existieran los adaptadores USB-Ethernet | Archivo de systemd que espera a las interfaces y reintenta (`firewall_config`, sección 7.3); confirmado con el reinicio del 2026-10-11 | Estudiante 5 |
 | 3 | | | | | | |

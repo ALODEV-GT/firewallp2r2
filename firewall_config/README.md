@@ -16,7 +16,7 @@ Todo lo que aparece aquí está **aplicado en el equipo real**. Los archivos de 
 | Enlaces con los vecinos directos | Comprobados: R-EDGE, PROXY, VPN-SRV y WEB01 responden; hay Internet a través de R-EDGE |
 | Pruebas de la bitácora con tráfico real de las VLAN | **Pendiente** (R2 no responde a través del proxy) |
 | Alertas de Suricata con tráfico real | **Pendiente** |
-| Comportamiento tras reiniciar el equipo | Comprobado el 2026-10-09: red, rutas, reglas y registros vuelven solos. Suricata falló en ese arranque y se corrigió (sección 7.3); la corrección aún no se ha probado con otro reinicio |
+| Comportamiento tras reiniciar el equipo | Comprobado el 2026-10-09: red, rutas, reglas y registros vuelven solos. Suricata falló en ese arranque y se corrigió (sección 7.3); la corrección se confirmó con el reinicio del 2026-10-11 (Suricata activo desde el arranque, sin reintentos) |
 
 ## 2. El equipo
 
