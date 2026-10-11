@@ -51,7 +51,7 @@ Con FW en política abierta temporal, como indica la sección 2.3.
 
 | ID | Prueba | Desde y comando | Resultado esperado | Estado | Evidencia y notas |
 |---|---|---|---|---|---|
-| ENL-01 | R2 – PROXY | R2: `ping -c 3 10.10.0.9` | Responde | FALLA | 2026-10-09, visto desde FW: R2 (`10.10.0.10`) no responde a través del proxy; ver incidencia 1 |
+| ENL-01 | R2 – PROXY | R2: `ping -c 3 10.10.0.9` | Responde | OK | 2026-10-11, desde FW a través del proxy: R2, las cuatro puertas de enlace y los cinco equipos de las VLAN responden (10 de 10). Falló el 2026-10-09; ver incidencia 1 |
 | ENL-02 | PROXY – FW | PROXY: `ping -c 3 10.10.0.5` | Responde | OK | 2026-10-09, desde FW: PROXY 3/3 por sus dos direcciones; su DNS (`10.10.0.9`) responde |
 | ENL-03 | FW – R-EDGE | FW: `ping -c 3 10.10.0.1` | Responde | OK | 2026-10-05: 3/3 desde FW; además Internet responde a través de R-EDGE (8.8.8.8 y 1.1.1.1, 3/3) |
 | ENL-04 | FW – DMZ | FW: `ping -c 3 10.10.50.2` y `ping -c 3 10.10.50.10` | Responden | OK | 2026-10-05: VPN-SRV y WEB01 3/3; WEB01 y WEB02 responden HTTP 200 (misma MAC: es una sola máquina) |
@@ -194,6 +194,7 @@ Con las reglas definitivas de FW cargadas.
 
 | N.º | Fecha | Prueba | Qué falló | Causa | Corrección | Responsable |
 |---|---|---|---|---|---|---|
-| 1 | 2026-10-09 | ENL-01, ENL-06 | Desde FW no responden R2 ni ningún equipo de las VLAN | Sin determinar. El proxy sí reenvía (aparece como primer salto de la traza); el corte está entre el proxy y R2, o R2 no responde | Pendiente | Estudiantes 1 y 2 |
+| 1 | 2026-10-09 | ENL-01, ENL-06 | Desde FW no responden R2 ni ningún equipo de las VLAN | No se determinó con certeza: el 2026-10-11, al revisar el proxy, el reenvío ya estaba activo (`ip_forward` y reglas en `DOCKER-USER`) y R2 respondía | Resuelto el 2026-10-11 | Estudiantes 1 y 2 |
 | 2 | 2026-10-09 | IDS-01 | Suricata quedó en estado fallido tras reiniciar FW | Arrancó antes de que existieran los adaptadores USB-Ethernet | Archivo de systemd que espera a las interfaces y reintenta (`firewall_config`, sección 7.3); confirmado con el reinicio del 2026-10-11 | Estudiante 5 |
+| 3 | 2026-10-11 | PRX-04, INT-01 | El HTTP de PC-USER01 no llegaba a Squid ni a Internet | En el proxy: el tráfico de las VLAN salía por el Wi-Fi del equipo y lo descartaba la cadena `FORWARD` de Docker; faltaba la regla `socket transparent`; y Tailscale deja `src_valid_mark=1`, con lo que el kernel descartaba los paquetes marcados para TPROXY | Reglas `from 10.10.0.0/16` hacia la tabla 101, regla `socket transparent`, `accept_local=1` en las dos interfaces del proyecto, todo en `xelajunetwork-tproxy-on`. Comprobado: `curl -I http://neverssl.com` desde PC-USER01 da 200, Squid registra `10.10.20.10 TCP_MISS/200` y el firewall `FW-ALLOW` con origen `10.10.20.10` | Estudiantes 2 y 5 |
 | 3 | | | | | | |
